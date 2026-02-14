@@ -50,7 +50,7 @@ ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they 
 # --- MODEL INITIALIZATION ---
 # Use 'gemini-1.5-flash-latest' to ensure you have the newest version
 model = genai.GenerativeModel(
-    model_name="gemini-2.5-pro", 
+    model_name="gemini-2.5-flash", 
     system_instruction=system_instruction
 )
 
