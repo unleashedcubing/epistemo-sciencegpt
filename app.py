@@ -58,7 +58,7 @@ model = genai.GenerativeModel(
 @st.cache_resource
 def get_textbook_content():
     
-    pdf_files = ["CIE_9_WB.pdf", "CIE_9_SB.pdf", "CIE_8_WB.pdf", "CIE_8_SB.pdf", "CIE_7_WB.pdf", "CIE_7_SB.pdf",]
+    pdf_files = ["CIE_9_WB.pdf", "CIE_8_WB.pdf", "CIE_7_WB.pdf"]
     
     uploaded_parts = []
     st.write("Checking for textbooks in the repository...") # Status message
