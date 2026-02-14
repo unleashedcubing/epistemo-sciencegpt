@@ -5,8 +5,8 @@ import requests
 import io
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Cambridge Science Tutor", page_icon="🔬")
-st.title("🔬 Cambridge Science Tutor (Stage 7-9)")
+st.set_page_config(page_title="Epistemo ScienceGPT", page_icon="🔬")
+st.title("🔬 Epistemo ScienceGPT (CIE Stage 7-9)")
 st.write("Ask me for explanations, question papers, or diagrams!")
 
 # --- API SETUP ---
