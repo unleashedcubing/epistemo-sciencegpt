@@ -40,11 +40,11 @@ st.markdown("""
         background-color: #1a1d24;
         border-radius: 8px;
         margin: 10px 0;
-        border-left: 3px solid #00d4ff;
+        border-left: 3px solid #fc8404;
     }
     
     .thinking-text {
-        color: #00d4ff;
+        color: #fc8404;
         font-size: 14px;
         font-weight: 500;
     }
@@ -58,7 +58,7 @@ st.markdown("""
         width: 6px;
         height: 6px;
         border-radius: 50%;
-        background-color: #00d4ff;
+        background-color: #fc8404;
         animation: thinking-pulse 1.4s ease-in-out infinite;
     }
     
@@ -126,6 +126,9 @@ ALSO: Use BOTH WB (Workbook) AND TB (Textbook) because the WB has questions main
   - Section C: 6 Long Answer Questions (3 marks each).
   - Section D: 2 Think Like a Scientist Questions (HARD) (5 marks each).
   - A complete Answer Key at the very end.
+
+### RULE 4: ARMAAN STYLE
+If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
 """
 
 # --- TEXTBOOK UPLOADER ---
