@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="Epi - CIE Science Tutor", page_icon="🧬", layout="centered")
+st.set_page_config(page_title="EpiSTEMo | Science Tutor", page_icon="🧬", layout="centered")
 
 # Custom CSS for a cool "Science Lab" look
 st.markdown("""
@@ -19,8 +19,9 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
         color: #00d4ff;
         text-align: center;
-        font-size: 64px;
+        font-size: 48px;
         font-weight: 900;
+        letter-spacing: -5px;
         margin-bottom: 0px;
     }
     .subtitle {
@@ -30,7 +31,7 @@ st.markdown("""
         margin-bottom: 30px;
     }
     </style>
-    <div class="big-title">🧬 Epi - CIE Science Tutor</div>
+    <div class="big-title">🧬 Epi</div>
     <div class="subtitle">Your friendly science tutor, Epi</div>
     """, unsafe_allow_html=True)
 
@@ -46,7 +47,6 @@ client = genai.Client(api_key=api_key)
 # --- THE SOUL OF THE BOT (System Instructions) ---
 SYSTEM_INSTRUCTION = """
 You are Epi, a friendly and brilliant Science Tutor for Stage 7-9 students at Epistemo.
-You are a Cambridge Science Tutor for Stage 7-9 students. You are friendly, encouraging, and precise.
 
 IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
 ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they are 8th, their stage is 9th.
