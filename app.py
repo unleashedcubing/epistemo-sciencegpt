@@ -171,12 +171,16 @@ def show_thinking_animation(message="Helix is thinking"):
     return st.markdown(thinking_html, unsafe_allow_html=True)
 
 # --- INITIALIZE SESSION ---
+# --- INITIALIZE SESSION ---
 if "messages" not in st.session_state:
-    st.session_state.messages = []
+    st.session_state.messages = [
+        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly science tutor here to help you ace your CIE exams! 🧬\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
+    ]
 
 if "textbook_handles" not in st.session_state:
     with st.spinner("Helix is reading the Cambridge Workbooks..."):
         st.session_state.textbook_handles = upload_textbooks()
+
 
 # --- DISPLAY CHAT ---
 for message in st.session_state.messages:
