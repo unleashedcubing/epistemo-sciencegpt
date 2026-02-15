@@ -7,7 +7,7 @@ import os
 import base64
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="EpiSTEMo Science Tutor", page_icon="🧬", layout="centered")
+st.set_page_config(page_title="Epistemo Science Tutor", page_icon="🧬", layout="centered")
 
 # --- CUSTOM ICONS (SVG Base64 to ensure they always load) ---
 def get_icon(color):
