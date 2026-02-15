@@ -5,23 +5,27 @@ from google import genai
 from google.genai import types
 from PIL import Image
 
-# --- PAGE CONFIG ---
+# --- PAGE SETUP ---
 st.set_page_config(page_title="Cambridge Science Tutor", page_icon="🔬")
 
 st.title("🔬 Cambridge Science Tutor")
-st.caption("Using Gemini 2.5 Flash (Brain) & Gemini 3 Pro (Vision)")
+st.write("Using Gemini 2.5 Flash (Brain) & Gemini 3 Pro (Multimodal Vision)")
 
-# --- API SETUP ---
+# --- API & CLIENT SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
 else:
     st.error("Please add your GOOGLE_API_KEY to Streamlit Secrets.")
     st.stop()
 
+# Use the modern Client
 client = genai.Client(api_key=api_key)
 
 # --- SYSTEM RULES ---
 SYSTEM_INSTRUCTION = """
+You are a friendly Cambridge Science tutor for Stage 7-9 students (ages 12-14). 
+
+RULES:
 You are a Cambridge Science Tutor for Stage 7-9 students. You are friendly, encouraging, and precise.
 
 IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
@@ -55,7 +59,7 @@ def upload_textbooks():
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # Fresh upload for the session to avoid permission errors
+                # Fresh upload for the session
                 uploaded_file = client.files.upload(file=fn)
                 active_files.append(uploaded_file)
             except Exception as e:
@@ -67,31 +71,29 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "textbook_handles" not in st.session_state:
-    with st.spinner("Loading science workbooks..."):
+    with st.spinner("Syncing Cambridge Science Workbooks..."):
         st.session_state.textbook_handles = upload_textbooks()
 
-# --- DISPLAY CHAT ---
+# --- DISPLAY CHAT HISTORY ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
-            st.image(message["content"])
+            st.image(message["content"], caption=message.get("caption"))
         else:
             st.markdown(message["content"])
 
-# --- CHAT INPUT ---
+# --- MAIN CHAT LOOP ---
 if prompt := st.chat_input("Ask a science question..."):
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
         try:
-            # Combine textbooks and prompt
-            contents = st.session_state.textbook_handles + [prompt]
-
-            # 1. TEXT RESPONSE (Gemini 2.5 Flash)
+            # 1. TEXT BRAIN (Gemini 2.5 Flash)
+            # This model handles the 1,000+ pages of PDFs and Google Search
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=contents,
+                contents=st.session_state.textbook_handles + [prompt],
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
                     tools=[{"google_search": {}}]
@@ -102,44 +104,45 @@ if prompt := st.chat_input("Ask a science question..."):
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # 2. IMAGE RESPONSE (Gemini 3 Pro)
+            # 2. IMAGE BRAIN (Gemini 3 Pro)
+            # Only triggered if 2.5 Flash decides a visual is needed
             if "IMAGE_GEN:" in bot_text:
-                img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
+                img_prompt = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                 
-                with st.status("🎨 Gemini 3 Pro is drawing..."):
+                with st.status(f"🎨 Generating visual with Gemini 3 Pro..."):
+                    # Using the multimodal preview model as per your link
                     image_response = client.models.generate_content(
                         model="gemini-3-pro-image-preview",
-                        contents=[img_desc],
+                        contents=[img_prompt],
                         config=types.GenerateContentConfig(
-                            response_modalities=['IMAGE']
+                            response_modalities=['TEXT', 'IMAGE']
                         )
                     )
                     
+                    # Process the multimodal parts
                     for part in image_response.parts:
-                        # FIX: Check for 'image' data in the part directly
-                        if part.image:
-                            # 1. Get the raw bytes from the Google API
-                            raw_image_bytes = part.image.data
+                        # If the model gives extra text or clarification
+                        if part.text:
+                            st.write(part.text)
+                            st.session_state.messages.append({"role": "assistant", "content": part.text})
+                        
+                        # If the model gives the image data
+                        elif image := part.as_image():
+                            st.image(image, caption="Generated Science Visual")
                             
-                            # 2. Open those bytes using the real Pillow (PIL) library
-                            pil_image = Image.open(io.BytesIO(raw_image_bytes))
-                            
-                            # 3. Now we can safely convert and display
-                            pil_image_rgb = pil_image.convert("RGB")
-                            st.image(pil_image_rgb)
-                            
-                            # 4. Save to bytes for chat history
+                            # Save bytes for history
                             buf = io.BytesIO()
-                            pil_image_rgb.save(buf, format="PNG")
+                            image.save(buf, format="PNG")
                             st.session_state.messages.append({
                                 "role": "assistant", 
                                 "content": buf.getvalue(), 
-                                "is_image": True
+                                "is_image": True,
+                                "caption": "Generated Science Visual"
                             })
 
         except Exception as e:
-            if "403" in str(e) or "PERMISSION_DENIED" in str(e):
-                st.error("Session refreshed. Please send your question again.")
+            if "403" in str(e):
+                st.error("Session refreshed. Please re-send your question.")
                 del st.session_state.textbook_handles
             else:
-                st.error(f"Something went wrong: {e}")
+                st.error(f"Error: {e}")
