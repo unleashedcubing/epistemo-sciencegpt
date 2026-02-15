@@ -20,7 +20,7 @@ st.markdown("""
         color: #00d4ff;
         text-align: center;
         font-size: 48px;
-        font-weight: 500;
+        font-weight: 1200;
         letter-spacing: -3px;
         margin-bottom: 0px;
     }
