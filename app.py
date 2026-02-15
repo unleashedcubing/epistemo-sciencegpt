@@ -1,88 +1,117 @@
 import streamlit as st
-import os
-import time
+import google.generativeai as genai
+import requests
 import io
-from google import genai
-from google.genai import types
+import urllib.parse
+import os
 
-# --- PAGE CONFIG ---
-st.set_page_config(page_title="Epi - CIE Science Tutor", page_icon="🧬", layout="centered")
+# --- THEME AND STYLING (Greenish & Inter Black) ---
+st.set_page_config(page_title="EpiSTEMo Science Tutor", page_icon="🧬", layout="centered")
 
-# Custom CSS for a cool "Science Lab" look
 st.markdown("""
     <style>
-    .stApp {
-        background-color: #0e1117;
-        color: #ffffff;
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@900&display=swap');
+
+    /* Theme colors */
+    :root {
+        --primary-green: #10b981;
+        --dark-bg: #064e3b;
     }
-    .big-title {
-        font-family: 'Helvetica Neue', sans-serif;
-        color: #00d4ff;
+
+    /* Top Title Styling */
+    .main-title {
+        font-family: 'Inter', sans-serif;
+        font-weight: 900;
+        font-size: 64px;
+        letter-spacing: -4px; /* Close tracking */
+        color: #f8fafc;
         text-align: center;
-        font-size: 48px;
-        font-weight: bold;
-        margin-bottom: 0px;
+        margin-bottom: -10px;
+        text-transform: uppercase;
     }
+
     .subtitle {
+        font-family: 'Inter', sans-serif;
         text-align: center;
-        color: #888;
-        font-size: 18px;
+        color: #34d399;
+        font-size: 14px;
+        letter-spacing: 2px;
         margin-bottom: 30px;
+        text-transform: uppercase;
+    }
+
+    /* Background and Chat Theme */
+    .stApp {
+        background-color: #022c22;
+    }
+    
+    .stChatMessage {
+        background-color: #064e3b;
+        border-radius: 15px;
+        color: white;
+    }
+    
+    /* Input Box Styling */
+    .stChatInputContainer {
+        padding-bottom: 20px;
     }
     </style>
-    <div class="big-title">🧬 Epistemo</div>
-    <div class="subtitle">Your friendly science tutor, Epi</div>
+    
+    <div class="main-title">EPISTEMO</div>
+    <div class="subtitle">Cambridge Science Intelligence</div>
     """, unsafe_allow_html=True)
 
 # --- API SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
-    api_key = st.secrets["GOOGLE_API_KEY"]
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 else:
-    st.error("Error: GOOGLE_API_KEY not found in Streamlit Secrets.")
+    st.error("Missing Google API Key in Secrets.")
     st.stop()
 
-client = genai.Client(api_key=api_key)
+pollinations_key = st.secrets.get("POLLINATIONS_API_KEY")
 
-# --- THE SOUL OF THE BOT (System Instructions) ---
-SYSTEM_INSTRUCTION = """
-You are Epi, a friendly and brilliant Science Tutor for Stage 7-9 students at Epistemo.
-You are a Cambridge Science Tutor for Stage 7-9 students. You are friendly, encouraging, and precise.
+# --- SYSTEM INSTRUCTIONS ---
+system_instructions = """
+You are Epi, a friendly and brilliant Cambridge Science Tutor for Stage 7-9 students at Epistemo.
 
-IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
-ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they are 8th, their stage is 9th.
+IDENTITY RULES:
+- Your name is Epi. 
+- Remind the user ONLY ONCE at the start of the conversation: "Just a reminder: Your Stage is your Grade + 1 (e.g., if you are in 8th Grade, we use Stage 9 materials)."
 
-### RULE 1: SOURCE PRIORITY
-- First, ALWAYS check the content of the uploaded PDF files to answer a question.
-- If the answer is NOT in the textbook, you must state: "I couldn't find this in your textbook, but here is what I found online:" and then answer using your general knowledge.
-- When you answer using the textbook, you MUST cite the source like this: "(Source: [display_name of the file])".
+CONTENT RULES:
+- Always prioritize Stage and Chapter if provided by the user.
+- RULE 1 (SOURCE PRIORITY): First, check the uploaded workbook files (CIE_7_WB.pdf, CIE_8_WB.pdf, CIE_9_WB.pdf). 
+- If found in text: Cite as "(Source: [File Name])".
+- If NOT in text: State "I couldn't find this in your textbook, but here is what I found from my science sensors:" then use Google Search/General Knowledge.
 
-### RULE 2: IMAGE GENERATION (STRICT)
+IMAGE GENERATION:
+- Output this command for any visual request: IMAGE_GEN: [Detailed scientific description, white background, with labels]
 
-- **IF THE USER ASKS FOR A NORMAL DIAGRAM:** If they just ask for a "diagram of a cell" or "picture of a heart", you MUST output this specific command and nothing else:
-  IMAGE_GEN: [A high-quality scientific illustration of the topic, detailed, white background, with labels]
-
-### RULE 3: QUESTION PAPERS
-- When asked to create a question paper, quiz, or test, strictly follow this structure:
-  - Title: [Topic] Assessment
-  - Section A: 5 Multiple Choice Questions/Fill in the blanks, etc. (1 mark each).
-  - Section B: 10 Short Answer Questions (2 marks each).
-  - Section C: 6 Long Answer Questions (3 marks each).
-  - Section D: 2 Think Like a Scientist Questions (HARD) (5 marks each).
-  - A complete Answer Key at the very end.
+EXAM STRUCTURE:
+When asked to create a paper/test:
+- Section A: 5 Multiple Choice/Fill in the blanks (1 mark each).
+- Section B: 10 Short Answer Questions (2 marks each).
+- Section C: 6 Long Answer Questions (3 marks each).
+- Section D: 2 Think Like a Scientist Questions (HARD) (5 marks each).
+- Provide a full Answer Key at the end.
 """
 
-# --- TEXTBOOK UPLOADER ---
+model = genai.GenerativeModel(
+    model_name="gemini-2.5-flash", 
+    system_instruction=system_instructions
+)
+
+# --- FILE HANDLING ---
 def upload_textbooks():
     pdf_filenames = ["CIE_7_WB.pdf", "CIE_8_WB.pdf", "CIE_9_WB.pdf"] 
     active_files = []
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # Fresh upload for the session to ensure active permission handles
-                uploaded_file = client.files.upload(file=fn)
+                uploaded_file = genai.upload_file(path=fn, display_name=fn)
                 active_files.append(uploaded_file)
-            except Exception as e:
-                st.sidebar.error(f"Error loading {fn}: {e}")
+            except Exception:
+                pass
     return active_files
 
 # --- INITIALIZE SESSION ---
@@ -90,87 +119,68 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "textbook_handles" not in st.session_state:
-    with st.spinner("Epi is reading the Cambridge Workbooks..."):
+    with st.spinner("Epi is loading the Science Workbooks..."):
         st.session_state.textbook_handles = upload_textbooks()
+
+# --- IMAGE FUNCTION ---
+def get_image_authenticated(prompt):
+    encoded_prompt = urllib.parse.quote(prompt)
+    url = f"https://gen.pollinations.ai/image/{encoded_prompt}"
+    headers = {}
+    if pollinations_key:
+        headers["Authorization"] = f"Bearer {pollinations_key}"
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        if response.status_code == 200:
+            return response.content
+    except:
+        return None
+    return None
 
 # --- DISPLAY CHAT ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
-            st.image(message["content"])
+            st.image(message["content"], caption=message.get("caption"))
         else:
             st.markdown(message["content"])
 
-# --- MAIN CHAT LOOP ---
-if prompt := st.chat_input("Ask Epi a question..."):
-    # 1. Show User Message
+# --- CHAT INPUT ---
+if prompt := st.chat_input("Ask Epi about Science..."):
     st.chat_message("user").markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.session_state.messages.append({"role": "user", "content": prompt, "is_image": False})
 
     with st.chat_message("assistant"):
-        try:
-            # 2. TEXT RESPONSE (Gemini 2.5 Flash)
-            # Using 2.5 Flash for the heavy textbook/search logic
-            text_response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=st.session_state.textbook_handles + [prompt],
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    tools=[{"google_search": {}}]
-                )
-            )
-            
-            bot_text = text_response.text
-            st.markdown(bot_text)
-            st.session_state.messages.append({"role": "assistant", "content": bot_text})
-
-            # 3. IMAGE GENERATION (Gemini 3 Pro Multimodal)
-            if "IMAGE_GEN:" in bot_text:
-                img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
+        with st.spinner("Epi is thinking..."):
+            try:
+                # Build context with textbooks
+                history = [{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages if not m.get("is_image")]
                 
-                with st.status("🎨 Epi is painting a diagram with Gemini 3 Pro..."):
-                    # Retry logic for 503 Busy errors
-                    for attempt in range(2):
-                        try:
-                            image_response = client.models.generate_content(
-                                model="gemini-3-pro-image-preview",
-                                contents=[img_desc],
-                                config=types.GenerateContentConfig(
-                                    response_modalities=['TEXT', 'IMAGE']
-                                )
-                            )
-                            
-                            for part in image_response.parts:
-                                if part.inline_data:
-                                    img_bytes = part.inline_data.data
-                                    
-                                    # Display and save
-                                    st.image(img_bytes, caption="Generated by EpiSTEMo")
-                                    st.session_state.messages.append({
-                                        "role": "assistant", 
-                                        "content": img_bytes, 
-                                        "is_image": True
-                                    })
-                            break
-                        except Exception as inner_e:
-                            if "503" in str(inner_e) and attempt == 0:
-                                time.sleep(2)
-                                continue
-                            else:
-                                raise inner_e
-
-        except Exception as e:
-            if "403" in str(e) or "PERMISSION_DENIED" in str(e):
-                st.error("Epi's connection to the workbooks timed out. Please refresh the page!")
-                del st.session_state.textbook_handles
-            else:
-                st.error(f"Epi encountered a technical glitch: {e}")
-
-# --- SIDEBAR INFO ---
-st.sidebar.title("About Epi")
-st.sidebar.info("""
-**Epi** is an AI Science Tutor designed for the students of Epistemo.
-- **Brain:** Gemini 2.5 Flash
-- **Image:** Gemini 3 Pro
-- **Focus:** Cambridge Stage 7-9
-""")
+                # Start chat with PDF handles passed as parts
+                chat = model.start_chat(history=history)
+                response = chat.send_message(st.session_state.textbook_handles + [prompt])
+                response_text = response.text.strip()
+                
+                if "IMAGE_GEN:" in response_text:
+                    # Handle text portion if exists
+                    display_text = response_text.split("IMAGE_GEN:")[0].strip()
+                    if display_text:
+                        st.markdown(display_text)
+                    
+                    # Handle image portion
+                    image_prompt = response_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
+                    st.write(f"🎨 *Epi is drawing: {image_prompt}...*")
+                    image_data = get_image_authenticated(image_prompt)
+                    
+                    if image_data:
+                        st.image(image_data, caption=image_prompt)
+                        st.session_state.messages.append({
+                            "role": "assistant", "content": image_data, 
+                            "is_image": True, "caption": image_prompt
+                        })
+                else:
+                    st.markdown(response_text)
+                    st.session_state.messages.append({"role": "assistant", "content": response_text, "is_image": False})
+                
+            except Exception as e:
+                st.error(f"Epi encountered an error: {e}")
