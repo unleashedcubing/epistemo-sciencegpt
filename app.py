@@ -8,7 +8,7 @@ from google.genai import types
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Epistemo | Science Tutor", page_icon="🧬", layout="centered")
 
-# Custom CSS for a cool "Science Lab" look
+# Custom CSS for a cool "Science Lab" look + Thinking Animation
 st.markdown("""
     <style>
     .stApp {
@@ -29,6 +29,60 @@ st.markdown("""
         color: #888;
         font-size: 18px;
         margin-bottom: 30px;
+    }
+    
+    /* Thinking Animation Styles */
+    .thinking-container {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px;
+        background-color: #1a1d24;
+        border-radius: 8px;
+        margin: 10px 0;
+        border-left: 3px solid #00d4ff;
+    }
+    
+    .thinking-text {
+        color: #00d4ff;
+        font-size: 14px;
+        font-weight: 500;
+    }
+    
+    .thinking-dots {
+        display: flex;
+        gap: 4px;
+    }
+    
+    .thinking-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background-color: #00d4ff;
+        animation: thinking-pulse 1.4s ease-in-out infinite;
+    }
+    
+    .thinking-dot:nth-child(1) {
+        animation-delay: 0s;
+    }
+    
+    .thinking-dot:nth-child(2) {
+        animation-delay: 0.2s;
+    }
+    
+    .thinking-dot:nth-child(3) {
+        animation-delay: 0.4s;
+    }
+    
+    @keyframes thinking-pulse {
+        0%, 60%, 100% {
+            opacity: 0.3;
+            transform: scale(0.8);
+        }
+        30% {
+            opacity: 1;
+            transform: scale(1.2);
+        }
     }
     </style>
     <div class="big-title">🧬 epi.ai</div>
@@ -86,6 +140,21 @@ def upload_textbooks():
                 st.sidebar.error(f"Error loading {fn}: {e}")
     return active_files
 
+# --- THINKING ANIMATION COMPONENT ---
+def show_thinking_animation(message="Epi is thinking"):
+    """Display a Perplexity-style thinking animation"""
+    thinking_html = f"""
+    <div class="thinking-container">
+        <span class="thinking-text">{message}</span>
+        <div class="thinking-dots">
+            <div class="thinking-dot"></div>
+            <div class="thinking-dot"></div>
+            <div class="thinking-dot"></div>
+        </div>
+    </div>
+    """
+    return st.markdown(thinking_html, unsafe_allow_html=True)
+
 # --- INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -109,6 +178,11 @@ if prompt := st.chat_input("Ask Epi a question..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
+        # Show thinking animation
+        thinking_placeholder = st.empty()
+        with thinking_placeholder:
+            show_thinking_animation("Epi is searching the textbooks")
+        
         try:
             # 2. TEXT RESPONSE (Gemini 2.5 Flash)
             # Using 2.5 Flash for the heavy textbook/search logic
@@ -122,47 +196,60 @@ if prompt := st.chat_input("Ask Epi a question..."):
             )
             
             bot_text = text_response.text
+            
+            # Clear thinking animation and show response
+            thinking_placeholder.empty()
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
             # 3. IMAGE GENERATION (Gemini 3 Pro Multimodal)
             if "IMAGE_GEN:" in bot_text:
-                img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
+                img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\\n")[0]
                 
-                with st.status("🎨 Epi is painting a diagram with Gemini 3 Pro..."):
-                    # Retry logic for 503 Busy errors
-                    for attempt in range(2):
-                        try:
-                            image_response = client.models.generate_content(
-                                model="gemini-3-pro-image-preview",
-                                contents=[img_desc],
-                                config=types.GenerateContentConfig(
-                                    response_modalities=['TEXT', 'IMAGE']
-                                )
+                # Show thinking animation for image generation
+                img_thinking_placeholder = st.empty()
+                with img_thinking_placeholder:
+                    show_thinking_animation("Epi is painting a diagram")
+                
+                # Retry logic for 503 Busy errors
+                for attempt in range(2):
+                    try:
+                        image_response = client.models.generate_content(
+                            model="gemini-3-pro-image-preview",
+                            contents=[img_desc],
+                            config=types.GenerateContentConfig(
+                                response_modalities=['TEXT', 'IMAGE']
                             )
-                            
-                            for part in image_response.parts:
-                                if part.inline_data:
-                                    img_bytes = part.inline_data.data
-                                    
-                                    # Display and save
-                                    st.image(img_bytes, caption="Generated by EpiSTEMo")
-                                    st.session_state.messages.append({
-                                        "role": "assistant", 
-                                        "content": img_bytes, 
-                                        "is_image": True
-                                    })
-                            break
-                        except Exception as inner_e:
-                            if "503" in str(inner_e) and attempt == 0:
-                                time.sleep(2)
-                                continue
-                            else:
-                                raise inner_e
+                        )
+                        
+                        for part in image_response.parts:
+                            if part.inline_data:
+                                img_bytes = part.inline_data.data
+                                
+                                # Clear thinking animation
+                                img_thinking_placeholder.empty()
+                                
+                                # Display and save
+                                st.image(img_bytes, caption="Generated by EpiSTEMo")
+                                st.session_state.messages.append({
+                                    "role": "assistant", 
+                                    "content": img_bytes, 
+                                    "is_image": True
+                                })
+                        break
+                    except Exception as inner_e:
+                        if "503" in str(inner_e) and attempt == 0:
+                            time.sleep(2)
+                            continue
+                        else:
+                            img_thinking_placeholder.empty()
+                            raise inner_e
 
         except Exception as e:
+            thinking_placeholder.empty()
             if "403" in str(e) or "PERMISSION_DENIED" in str(e):
                 st.error("Epi's connection to the workbooks timed out. Please refresh the page!")
                 del st.session_state.textbook_handles
             else:
                 st.error(f"Epi encountered a technical glitch: {e}")
+
