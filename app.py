@@ -1,31 +1,27 @@
 import streamlit as st
 import os
 import io
+import time
 from google import genai
 from google.genai import types
 from PIL import Image
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Cambridge Science Tutor", page_icon="🔬")
-
 st.title("🔬 Cambridge Science Tutor")
-st.write("Using Gemini 2.5 Flash (Brain) & Gemini 3 Pro (Multimodal Vision)")
 
-# --- API & CLIENT SETUP ---
+# --- API SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
 else:
-    st.error("Please add your GOOGLE_API_KEY to Streamlit Secrets.")
+    st.error("Missing API Key in Secrets.")
     st.stop()
 
-# Use the modern Client
+# Set a longer timeout (default is often 60s, let's allow more)
 client = genai.Client(api_key=api_key)
 
 # --- SYSTEM RULES ---
 SYSTEM_INSTRUCTION = """
-You are a friendly Cambridge Science tutor for Stage 7-9 students (ages 12-14). 
-
-RULES:
 You are a Cambridge Science Tutor for Stage 7-9 students. You are friendly, encouraging, and precise.
 
 IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
@@ -55,11 +51,9 @@ ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they 
 def upload_textbooks():
     pdf_filenames = ["CIE_7_WB.pdf", "CIE_8_WB.pdf", "CIE_9_WB.pdf"] 
     active_files = []
-    
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # Fresh upload for the session
                 uploaded_file = client.files.upload(file=fn)
                 active_files.append(uploaded_file)
             except Exception as e:
@@ -71,26 +65,26 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "textbook_handles" not in st.session_state:
-    with st.spinner("Syncing Cambridge Science Workbooks..."):
+    with st.spinner("Preparing textbooks..."):
         st.session_state.textbook_handles = upload_textbooks()
 
-# --- DISPLAY CHAT HISTORY ---
+# --- DISPLAY CHAT ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
-            st.image(message["content"], caption=message.get("caption"))
+            st.image(message["content"])
         else:
             st.markdown(message["content"])
 
 # --- MAIN CHAT LOOP ---
-if prompt := st.chat_input("Ask a science question..."):
+if prompt := st.chat_input("Ask a question..."):
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
         try:
             # 1. TEXT BRAIN (Gemini 2.5 Flash)
-            # This model handles the 1,000+ pages of PDFs and Google Search
+            # We use Flash here because it is fast and handles PDFs well.
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=st.session_state.textbook_handles + [prompt],
@@ -105,44 +99,47 @@ if prompt := st.chat_input("Ask a science question..."):
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
             # 2. IMAGE BRAIN (Gemini 3 Pro)
-            # Only triggered if 2.5 Flash decides a visual is needed
             if "IMAGE_GEN:" in bot_text:
                 img_prompt = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                 
-                with st.status(f"🎨 Generating visual with Gemini 3 Pro..."):
-                    # Using the multimodal preview model as per your link
-                    image_response = client.models.generate_content(
-                        model="gemini-3-pro-image-preview",
-                        contents=[img_prompt],
-                        config=types.GenerateContentConfig(
-                            response_modalities=['TEXT', 'IMAGE']
-                        )
-                    )
-                    
-                    # Process the multimodal parts
-                    for part in image_response.parts:
-                        # If the model gives extra text or clarification
-                        if part.text:
-                            st.write(part.text)
-                            st.session_state.messages.append({"role": "assistant", "content": part.text})
-                        
-                        # If the model gives the image data
-                        elif image := part.as_image():
-                            st.image(image, caption="Generated Science Visual")
+                with st.status("🎨 Gemini 3 Pro is generating your visual..."):
+                    # We only send the PROMPT to the Image model (no PDFs) to keep it fast
+                    # We wrap this in a retry loop because 503 is often temporary
+                    success = False
+                    for attempt in range(2): # Try twice
+                        try:
+                            image_response = client.models.generate_content(
+                                model="gemini-3-pro-image-preview",
+                                contents=[img_prompt],
+                                config=types.GenerateContentConfig(
+                                    response_modalities=['TEXT', 'IMAGE']
+                                )
+                            )
                             
-                            # Save bytes for history
-                            buf = io.BytesIO()
-                            image.save(buf, format="PNG")
-                            st.session_state.messages.append({
-                                "role": "assistant", 
-                                "content": buf.getvalue(), 
-                                "is_image": True,
-                                "caption": "Generated Science Visual"
-                            })
+                            for part in image_response.parts:
+                                if image := part.as_image():
+                                    st.image(image)
+                                    buf = io.BytesIO()
+                                    image.save(buf, format="PNG")
+                                    st.session_state.messages.append({
+                                        "role": "assistant", 
+                                        "content": buf.getvalue(), 
+                                        "is_image": True
+                                    })
+                            success = True
+                            break # Exit retry loop on success
+                        except Exception as inner_e:
+                            if "503" in str(inner_e) and attempt == 0:
+                                time.sleep(2) # Wait 2 seconds before retrying
+                                continue
+                            else:
+                                raise inner_e
 
         except Exception as e:
-            if "403" in str(e):
-                st.error("Session refreshed. Please re-send your question.")
+            if "503" in str(e):
+                st.error("Google's servers are a bit busy right now. Please wait 10 seconds and try your question again.")
+            elif "403" in str(e):
+                st.error("Session expired. Refreshing...")
                 del st.session_state.textbook_handles
             else:
                 st.error(f"Error: {e}")
