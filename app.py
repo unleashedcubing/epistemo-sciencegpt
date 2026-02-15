@@ -20,8 +20,8 @@ st.markdown("""
         color: #00d4ff;
         text-align: center;
         font-size: 48px;
-        font-weight: 900;
-        letter-spacing: -5px;
+        font-weight: 1200;
+        letter-spacing: -3px;
         margin-bottom: 0px;
     }
     .subtitle {
@@ -31,7 +31,7 @@ st.markdown("""
         margin-bottom: 30px;
     }
     </style>
-    <div class="big-title">🧬 Epi</div>
+    <div class="big-title">🧬 epi.ai</div>
     <div class="subtitle">Your friendly science tutor, Epi</div>
     """, unsafe_allow_html=True)
 
