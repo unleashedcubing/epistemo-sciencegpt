@@ -168,7 +168,7 @@ def create_cached_content():
     # 2. Create Cache
     # Cache valid for 60 minutes (TTL)
     cache = client.caches.create(
-        model="models/gemini-1.5-flash-002", # Explicitly using a model that supports caching
+        model="models/gemini-2.5-flash", # Explicitly using a model that supports caching
         config=types.CreateCachedContentConfig(
             display_name="CIE_Science_Textbooks_Cache",
             system_instruction=SYSTEM_INSTRUCTION,
