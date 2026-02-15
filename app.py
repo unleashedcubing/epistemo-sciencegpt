@@ -4,12 +4,11 @@ import io
 import time
 from google import genai
 from google.genai import types
-from PIL import Image
 
 # --- PAGE SETUP ---
 st.set_page_config(page_title="Cambridge Science Tutor", page_icon="🔬")
 st.title("🔬 Cambridge Science Tutor")
-st.caption("Powered by Gemini 2.5 Flash (Brain) & Gemini 3 Pro (Visuals)")
+st.caption("Powered by Gemini 2.5 Flash & Gemini 3 Pro")
 
 # --- API SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -54,6 +53,7 @@ def upload_textbooks():
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
+                # Fresh upload ensures we have active permission handles
                 uploaded_file = client.files.upload(file=fn)
                 active_files.append(uploaded_file)
             except Exception as e:
@@ -65,25 +65,27 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "textbook_handles" not in st.session_state:
-    with st.spinner("Preparing Cambridge Science Workbooks..."):
+    with st.spinner("Syncing your Science Workbooks..."):
         st.session_state.textbook_handles = upload_textbooks()
 
 # --- DISPLAY CHAT ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
+            # We display the stored bytes directly
             st.image(message["content"])
         else:
             st.markdown(message["content"])
 
 # --- MAIN CHAT LOOP ---
-if prompt := st.chat_input("Ask a science question..."):
+if prompt := st.chat_input("Ask me a science question..."):
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
         try:
             # 1. TEXT RESPONSE (Gemini 2.5 Flash)
+            # This handles the PDFs and Google Search logic
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=st.session_state.textbook_handles + [prompt],
@@ -99,36 +101,32 @@ if prompt := st.chat_input("Ask a science question..."):
 
             # 2. IMAGE RESPONSE (Gemini 3 Pro)
             if "IMAGE_GEN:" in bot_text:
+                # Clean the prompt for the image model
                 img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                 
-                with st.status("🎨 Gemini 3 Pro is creating your diagram..."):
-                    # Retry loop for 503 errors
-                    for attempt in range(2):
+                with st.status("🎨 Gemini 3 Pro is drawing your diagram..."):
+                    for attempt in range(2): # Simple retry for 503 errors
                         try:
                             image_response = client.models.generate_content(
                                 model="gemini-3-pro-image-preview",
-                                contents=[img_desc],
+                                contents=[img_prompt if 'img_prompt' in locals() else img_desc],
                                 config=types.GenerateContentConfig(
                                     response_modalities=['TEXT', 'IMAGE']
                                 )
                             )
                             
                             for part in image_response.parts:
+                                # ACCESS RAW BYTES DIRECTLY
                                 if part.image:
-                                    # THE FIX: Open the raw data bytes using Pillow directly
-                                    # This bypasses the attribute error entirely
-                                    raw_data = part.image.data
-                                    img = Image.open(io.BytesIO(raw_data))
+                                    img_bytes = part.image.data
                                     
-                                    # Display to user
-                                    st.image(img)
+                                    # Display bytes directly to Streamlit (safe and attribute-free)
+                                    st.image(img_bytes)
                                     
-                                    # Convert to PNG bytes for chat history
-                                    buf = io.BytesIO()
-                                    img.save(buf, format="png")
+                                    # Save bytes directly to history
                                     st.session_state.messages.append({
                                         "role": "assistant", 
-                                        "content": buf.getvalue(), 
+                                        "content": img_bytes, 
                                         "is_image": True
                                     })
                             break
@@ -136,14 +134,11 @@ if prompt := st.chat_input("Ask a science question..."):
                             if "503" in str(inner_e) and attempt == 0:
                                 time.sleep(2)
                                 continue
-                            else:
-                                raise inner_e
+                            else: raise inner_e
 
         except Exception as e:
-            if "503" in str(e):
-                st.error("Google's servers are busy. Please wait 10 seconds and try again.")
-            elif "403" in str(e) or "PERMISSION_DENIED" in str(e):
-                st.error("Session expired. Refreshing textbooks... please re-send your question.")
+            if "403" in str(e) or "PERMISSION_DENIED" in str(e):
+                st.error("Session expired. Please re-send your question; I've refreshed the books.")
                 del st.session_state.textbook_handles
             else:
                 st.error(f"Something went wrong: {e}")
