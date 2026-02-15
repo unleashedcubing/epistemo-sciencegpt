@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="EpiSTEMo | Science Tutor", page_icon="🧬", layout="centered")
+st.set_page_config(page_title="Epistemo | Science Tutor", page_icon="🧬", layout="centered")
 
 # Custom CSS for a cool "Science Lab" look
 st.markdown("""
@@ -73,7 +73,7 @@ ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they 
 
 # --- TEXTBOOK UPLOADER ---
 def upload_textbooks():
-    pdf_filenames = ["CIE_7_WB.pdf", "CIE_8_WB.pdf", "CIE_9_WB.pdf"] 
+    pdf_filenames = ["CIE_7_WB.pdf", "CIE_8_WB.pdf", "CIE_9_WB.pdf", "CIE_7_SB_1.pdf", "CIE_8_SB_1.pdf", "CIE_9_SB_1.pdf", "CIE_7_SB_2.pdf", "CIE_8_SB_2.pdf", "CIE_9_SB_2.pdf"] 
     active_files = []
     for fn in pdf_filenames:
         if os.path.exists(fn):
