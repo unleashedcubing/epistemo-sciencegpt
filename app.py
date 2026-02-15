@@ -1,26 +1,52 @@
 import streamlit as st
 import os
 import time
+import io
 from google import genai
 from google.genai import types
 
-# --- PAGE SETUP ---
-st.set_page_config(page_title="Cambridge Science Tutor", page_icon="🔬")
-st.title("🔬 Cambridge Science Tutor")
-st.caption("Powered by Gemini 2.5 Flash & Gemini 3 Pro")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="Epi - CIE Science Tutor", page_icon="🧬", layout="centered")
+
+# Custom CSS for a cool "Science Lab" look
+st.markdown("""
+    <style>
+    .stApp {
+        background-color: #0e1117;
+        color: #ffffff;
+    }
+    .big-title {
+        font-family: 'Helvetica Neue', sans-serif;
+        color: #00d4ff;
+        text-align: center;
+        font-size: 48px;
+        font-weight: bold;
+        margin-bottom: 0px;
+    }
+    .subtitle {
+        text-align: center;
+        color: #888;
+        font-size: 18px;
+        margin-bottom: 30px;
+    }
+    </style>
+    <div class="big-title">🧬 Epistemo</div>
+    <div class="subtitle">Your friendly science tutor, Epi</div>
+    """, unsafe_allow_html=True)
 
 # --- API SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
     api_key = st.secrets["GOOGLE_API_KEY"]
 else:
-    st.error("Missing API Key in Streamlit Secrets.")
+    st.error("Error: GOOGLE_API_KEY not found in Streamlit Secrets.")
     st.stop()
 
 client = genai.Client(api_key=api_key)
 
-# --- SYSTEM RULES ---
+# --- THE SOUL OF THE BOT (System Instructions) ---
 SYSTEM_INSTRUCTION = """
-YYou are a Cambridge Science Tutor for Stage 7-9 students. You are friendly, encouraging, and precise.
+You are Epi, a friendly and brilliant Science Tutor for Stage 7-9 students at Epistemo.
+You are a Cambridge Science Tutor for Stage 7-9 students. You are friendly, encouraging, and precise.
 
 IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
 ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they are 8th, their stage is 9th.
@@ -52,7 +78,7 @@ def upload_textbooks():
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # Fresh upload ensures active permission handles
+                # Fresh upload for the session to ensure active permission handles
                 uploaded_file = client.files.upload(file=fn)
                 active_files.append(uploaded_file)
             except Exception as e:
@@ -64,26 +90,27 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "textbook_handles" not in st.session_state:
-    with st.spinner("Syncing your Science Workbooks..."):
+    with st.spinner("Epi is reading the Cambridge Workbooks..."):
         st.session_state.textbook_handles = upload_textbooks()
 
 # --- DISPLAY CHAT ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
-            # Display stored bytes directly
             st.image(message["content"])
         else:
             st.markdown(message["content"])
 
 # --- MAIN CHAT LOOP ---
-if prompt := st.chat_input("Ask me a science question..."):
+if prompt := st.chat_input("Ask Epi a question..."):
+    # 1. Show User Message
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
         try:
-            # 1. TEXT RESPONSE (Gemini 2.5 Flash)
+            # 2. TEXT RESPONSE (Gemini 2.5 Flash)
+            # Using 2.5 Flash for the heavy textbook/search logic
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=st.session_state.textbook_handles + [prompt],
@@ -97,13 +124,13 @@ if prompt := st.chat_input("Ask me a science question..."):
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # 2. IMAGE RESPONSE (Gemini 3 Pro)
+            # 3. IMAGE GENERATION (Gemini 3 Pro Multimodal)
             if "IMAGE_GEN:" in bot_text:
                 img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                 
-                with st.status("🎨 Gemini 3 Pro is drawing your diagram..."):
-                    # Retry loop for 503 errors
-                    for attempt in range(2): 
+                with st.status("🎨 Epi is painting a diagram with Gemini 3 Pro..."):
+                    # Retry logic for 503 Busy errors
+                    for attempt in range(2):
                         try:
                             image_response = client.models.generate_content(
                                 model="gemini-3-pro-image-preview",
@@ -114,29 +141,36 @@ if prompt := st.chat_input("Ask me a science question..."):
                             )
                             
                             for part in image_response.parts:
-                                # THE FIX: Use 'inline_data' to get the raw bytes
                                 if part.inline_data:
                                     img_bytes = part.inline_data.data
                                     
-                                    # Display bytes directly (No Pillow required here)
-                                    st.image(img_bytes)
-                                    
-                                    # Save bytes directly to history
+                                    # Display and save
+                                    st.image(img_bytes, caption="Generated by EpiSTEMo")
                                     st.session_state.messages.append({
                                         "role": "assistant", 
                                         "content": img_bytes, 
                                         "is_image": True
                                     })
-                            break # Success, exit retry loop
+                            break
                         except Exception as inner_e:
                             if "503" in str(inner_e) and attempt == 0:
                                 time.sleep(2)
                                 continue
-                            else: raise inner_e
+                            else:
+                                raise inner_e
 
         except Exception as e:
             if "403" in str(e) or "PERMISSION_DENIED" in str(e):
-                st.error("Session expired. Please re-send your question; I've refreshed the books.")
+                st.error("Epi's connection to the workbooks timed out. Please refresh the page!")
                 del st.session_state.textbook_handles
             else:
-                st.error(f"Something went wrong: {e}")
+                st.error(f"Epi encountered a technical glitch: {e}")
+
+# --- SIDEBAR INFO ---
+st.sidebar.title("About Epi")
+st.sidebar.info("""
+**Epi** is an AI Science Tutor designed for the students of Epistemo.
+- **Brain:** Gemini 2.5 Flash
+- **Image:** Gemini 3 Pro
+- **Focus:** Cambridge Stage 7-9
+""")
