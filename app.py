@@ -9,7 +9,7 @@ from PIL import Image
 st.set_page_config(page_title="Cambridge Science Tutor", page_icon="🔬")
 
 st.title("🔬 Cambridge Science Tutor")
-st.caption("Stage 7-9 Science Specialist")
+st.caption("Powered by Gemini 2.5 Flash & Gemini 3 Pro")
 
 # --- API SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -33,11 +33,9 @@ ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they 
 - When you answer using the textbook, you MUST cite the source like this: "(Source: [display_name of the file])".
 
 ### RULE 2: IMAGE GENERATION (STRICT)
-- **IF THE USER ASKS FOR LABELS/TEXT:** If the user's prompt includes words like "with labels", "labeled", or "with text", you MUST reply with this exact sentence and nothing else:
-  "I'm sorry, the text generation in images isn't great, so I can't fix it. It was developed by a 10yr old, so what more can you expect?"
 
-- **IF THE USER ASKS FOR A NORMAL DIAGRAM:** If they just ask for a "diagram of a cell" or "picture of a heart" (without mentioning labels), you MUST output this specific command and nothing else:
-  IMAGE_GEN: [A high-quality scientific illustration of the topic, detailed, white background, no text, no words, no labels.] IF
+- **IF THE USER ASKS FOR A NORMAL DIAGRAM:** If they just ask for a "diagram of a cell" or "picture of a heart", you MUST output this specific command and nothing else:
+  IMAGE_GEN: [A high-quality scientific illustration or infographic of the topic, detailed, white background, labels.]
 
 ### RULE 3: QUESTION PAPERS
 - When asked to create a question paper, quiz, or test, strictly follow this structure:
@@ -49,7 +47,7 @@ ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they 
   - A complete Answer Key at the very end.
 """
 
-# --- ROBUST FILE UPLOADER ---
+# --- FILE UPLOADER (Fresh for each session to avoid 403 errors) ---
 def upload_textbooks():
     pdf_filenames = ["CIE_7_WB.pdf", "CIE_8_WB.pdf", "CIE_9_WB.pdf"] 
     active_files = []
@@ -57,7 +55,7 @@ def upload_textbooks():
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # Uploading fresh for the session to avoid 403 errors
+                # Upload fresh to ensure permissions
                 uploaded_file = client.files.upload(file=fn)
                 active_files.append(uploaded_file)
             except Exception as e:
@@ -68,7 +66,6 @@ def upload_textbooks():
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# We store handles in session_state, but if they are missing or error out, we re-upload
 if "textbook_handles" not in st.session_state:
     with st.spinner("Preparing textbooks..."):
         st.session_state.textbook_handles = upload_textbooks()
@@ -88,8 +85,7 @@ if prompt := st.chat_input("Ask a science question..."):
 
     with st.chat_message("assistant"):
         try:
-            # Prepare contents: Textbooks + User Prompt
-            # If handles exist, we pass them; if not, we just pass prompt
+            # Prepare content
             contents = st.session_state.textbook_handles + [prompt]
 
             # 1. TEXT RESPONSE (Gemini 2.5 Flash)
@@ -110,7 +106,7 @@ if prompt := st.chat_input("Ask a science question..."):
             if "IMAGE_GEN:" in bot_text:
                 img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                 
-                with st.status("🎨 Gemini 3 Pro is painting your diagram..."):
+                with st.status("🎨 Creating your diagram..."):
                     image_response = client.models.generate_content(
                         model="gemini-3-pro-image-preview",
                         contents=[img_desc],
@@ -121,20 +117,24 @@ if prompt := st.chat_input("Ask a science question..."):
                     
                     for part in image_response.parts:
                         if image := part.as_image():
-                            st.image(image)
-                            # Store bytes for history
+                            # FIX: Convert to RGB to ensure standard attributes exist
+                            image_rgb = image.convert("RGB")
+                            st.image(image_rgb)
+                            
+                            # Save to bytes for history
                             buf = io.BytesIO()
-                            image.save(buf, format="PNG")
+                            image_rgb.save(buf, format="PNG")
+                            img_bytes = buf.getvalue()
+                            
                             st.session_state.messages.append({
                                 "role": "assistant", 
-                                "content": buf.getvalue(), 
+                                "content": img_bytes, 
                                 "is_image": True
                             })
 
         except Exception as e:
-            # If we get a 403, it means the files expired. Clear them so they re-upload next time.
             if "403" in str(e) or "PERMISSION_DENIED" in str(e):
-                st.error("Session expired. Refreshing textbooks... please try your question again in a moment.")
+                st.error("Session expired. Please try your question again; I'm refreshing the textbooks now.")
                 del st.session_state.textbook_handles
             else:
                 st.error(f"Something went wrong: {e}")
