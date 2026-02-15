@@ -206,7 +206,7 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
             # 2. TEXT RESPONSE (Gemini 2.5 Flash)
             # Using 2.5 Flash for the heavy textbook/search logic
             text_response = client.models.generate_content(
-                model="gemini-2.5-pro",
+                model="gemini-2.5-flash",
                 contents=st.session_state.textbook_handles + [prompt],
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
