@@ -8,8 +8,8 @@ from PIL import Image
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Cambridge Science Tutor", page_icon="🔬")
 
-st.title("🔬 Cambridge Science Tutor (Stage 7-9)")
-st.caption("Powered by Gemini 2.5 Flash (Text) & Gemini 3 Pro (Images)")
+st.title("🔬 Cambridge Science Tutor")
+st.write("Powered by Gemini 2.5 Flash & Gemini 3 Pro")
 
 # --- API SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -18,6 +18,7 @@ else:
     st.error("Please add your GOOGLE_API_KEY to Streamlit Secrets.")
     st.stop()
 
+# Initialize the new Client
 client = genai.Client(api_key=api_key)
 
 # --- SYSTEM RULES ---
@@ -49,18 +50,18 @@ ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they 
   - A complete Answer Key at the very end.
 """
 
-# --- TEXTBOOK LOADING (Cached) ---
+# --- TEXTBOOK LOADING ---
 @st.cache_resource
 def load_textbooks():
-    # Update these filenames to match your PDFs in GitHub
-    pdf_filenames = ["CIE_8_WB.pdf", "CIE_9_WB.pdf", "CIE_7_WB.pdf"] 
+    # Update these filenames to match your PDFs uploaded to GitHub
+    pdf_filenames = ["CIE_7_WB.pdf", "CIE_8_WB.pdf", "CIE_9_WB.pdf"] 
     files_to_attach = []
     
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # Upload to Google's temporary file storage
-                uploaded_file = client.files.upload(path=fn)
+                # FIX: Use 'file' instead of 'path'
+                uploaded_file = client.files.upload(file=fn)
                 files_to_attach.append(uploaded_file)
             except Exception as e:
                 st.warning(f"Could not load {fn}: {e}")
@@ -90,8 +91,8 @@ if prompt := st.chat_input("Ask a science question..."):
 
     with st.chat_message("assistant"):
         try:
-            # --- STEP 1: GENERATE TEXT (Gemini 2.5 Flash) ---
-            # We send textbooks + search tool + prompt
+            # --- STEP 1: TEXT GENERATION (Gemini 2.5 Flash) ---
+            # Using the exact model name you requested
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=st.session_state.textbook_handles + [prompt],
@@ -105,27 +106,26 @@ if prompt := st.chat_input("Ask a science question..."):
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # --- STEP 2: CHECK FOR IMAGE COMMAND ---
+            # --- STEP 2: IMAGE GENERATION (Gemini 3 Pro) ---
             if "IMAGE_GEN:" in bot_text:
                 # Extract image description
                 img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                 
                 with st.status("🎨 Creating Diagram with Gemini 3 Pro..."):
-                    # Use Gemini 3 Pro for the Image Preview
                     image_response = client.models.generate_content(
                         model="gemini-3-pro-image-preview",
-                        contents=img_desc,
+                        contents=[img_desc],
                         config=types.GenerateContentConfig(
                             response_modalities=['IMAGE']
                         )
                     )
                     
                     for part in image_response.parts:
+                        # Check if part has image data
                         if image := part.as_image():
-                            # Display Image
                             st.image(image)
                             
-                            # Save to session history (converting PIL to bytes)
+                            # Save to history
                             buf = io.BytesIO()
                             image.save(buf, format="PNG")
                             st.session_state.messages.append({
