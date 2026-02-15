@@ -125,7 +125,7 @@ if prompt := st.chat_input("Ask a science question..."):
                                     
                                     # Convert to PNG bytes for chat history
                                     buf = io.BytesIO()
-                                    img.save(buf, format="PNG")
+                                    img.save(buf, format="png")
                                     st.session_state.messages.append({
                                         "role": "assistant", 
                                         "content": buf.getvalue(), 
