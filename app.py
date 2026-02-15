@@ -56,7 +56,7 @@ model = genai.GenerativeModel(
 @st.cache_resource
 def load_textbooks():
     # List your PDF filenames here
-    pdf_filenames = ["textbook1.pdf", "textbook2.pdf"] 
+    pdf_filenames = ["CIE_8_WB.pdf", "CIE_7_WB.pdf", "CIE_9_WB.pdf"] 
     uploaded_files = []
     for fn in pdf_filenames:
         if os.path.exists(fn):
@@ -73,7 +73,7 @@ if "textbook_data" not in st.session_state:
 # --- IMAGE GENERATOR (flux schnell) ---
 def generate_image(prompt):
     encoded_prompt = urllib.parse.quote(prompt)
-    model_param = urllib.parse.quote("flux")
+    model_param = urllib.parse.quote("gptimage")
     
     # Try Private API first
     if pollinations_key:
