@@ -9,7 +9,7 @@ from PIL import Image
 st.set_page_config(page_title="Cambridge Science Tutor", page_icon="🔬")
 
 st.title("🔬 Cambridge Science Tutor")
-st.write("Powered by Gemini 2.5 Flash & Gemini 3 Pro")
+st.caption("Stage 7-9 Science Specialist")
 
 # --- API SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -18,7 +18,6 @@ else:
     st.error("Please add your GOOGLE_API_KEY to Streamlit Secrets.")
     st.stop()
 
-# Initialize the new Client
 client = genai.Client(api_key=api_key)
 
 # --- SYSTEM RULES ---
@@ -50,32 +49,31 @@ ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they 
   - A complete Answer Key at the very end.
 """
 
-# --- TEXTBOOK LOADING ---
-@st.cache_resource
-def load_textbooks():
-    # Update these filenames to match your PDFs uploaded to GitHub
+# --- ROBUST FILE UPLOADER ---
+def upload_textbooks():
     pdf_filenames = ["CIE_7_WB.pdf", "CIE_8_WB.pdf", "CIE_9_WB.pdf"] 
-    files_to_attach = []
+    active_files = []
     
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # FIX: Use 'file' instead of 'path'
+                # Uploading fresh for the session to avoid 403 errors
                 uploaded_file = client.files.upload(file=fn)
-                files_to_attach.append(uploaded_file)
+                active_files.append(uploaded_file)
             except Exception as e:
-                st.warning(f"Could not load {fn}: {e}")
-    return files_to_attach
+                st.sidebar.error(f"Error loading {fn}: {e}")
+    return active_files
 
-# --- INITIALIZE SESSION STATE ---
+# --- INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# We store handles in session_state, but if they are missing or error out, we re-upload
 if "textbook_handles" not in st.session_state:
-    with st.spinner("Loading Science Textbooks..."):
-        st.session_state.textbook_handles = load_textbooks()
+    with st.spinner("Preparing textbooks..."):
+        st.session_state.textbook_handles = upload_textbooks()
 
-# --- DISPLAY CHAT HISTORY ---
+# --- DISPLAY CHAT ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
@@ -85,17 +83,19 @@ for message in st.session_state.messages:
 
 # --- CHAT INPUT ---
 if prompt := st.chat_input("Ask a science question..."):
-    # 1. Display User Message
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
         try:
-            # --- STEP 1: TEXT GENERATION (Gemini 2.5 Flash) ---
-            # Using the exact model name you requested
+            # Prepare contents: Textbooks + User Prompt
+            # If handles exist, we pass them; if not, we just pass prompt
+            contents = st.session_state.textbook_handles + [prompt]
+
+            # 1. TEXT RESPONSE (Gemini 2.5 Flash)
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=st.session_state.textbook_handles + [prompt],
+                contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
                     tools=[{"google_search": {}}]
@@ -106,12 +106,11 @@ if prompt := st.chat_input("Ask a science question..."):
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # --- STEP 2: IMAGE GENERATION (Gemini 3 Pro) ---
+            # 2. IMAGE RESPONSE (Gemini 3 Pro)
             if "IMAGE_GEN:" in bot_text:
-                # Extract image description
                 img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                 
-                with st.status("🎨 Creating Diagram with Gemini 3 Pro..."):
+                with st.status("🎨 Gemini 3 Pro is painting your diagram..."):
                     image_response = client.models.generate_content(
                         model="gemini-3-pro-image-preview",
                         contents=[img_desc],
@@ -121,11 +120,9 @@ if prompt := st.chat_input("Ask a science question..."):
                     )
                     
                     for part in image_response.parts:
-                        # Check if part has image data
                         if image := part.as_image():
                             st.image(image)
-                            
-                            # Save to history
+                            # Store bytes for history
                             buf = io.BytesIO()
                             image.save(buf, format="PNG")
                             st.session_state.messages.append({
@@ -135,4 +132,9 @@ if prompt := st.chat_input("Ask a science question..."):
                             })
 
         except Exception as e:
-            st.error(f"Error: {e}")
+            # If we get a 403, it means the files expired. Clear them so they re-upload next time.
+            if "403" in str(e) or "PERMISSION_DENIED" in str(e):
+                st.error("Session expired. Refreshing textbooks... please try your question again in a moment.")
+                del st.session_state.textbook_handles
+            else:
+                st.error(f"Something went wrong: {e}")
