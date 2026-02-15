@@ -1,30 +1,35 @@
 import streamlit as st
 import google.generativeai as genai
-import os
 import requests
 import io
+import urllib.parse
 
 # --- PAGE SETUP ---
-st.set_page_config(page_title="Epistemo ScienceGPT", page_icon="🔬")
-st.title("🔬 Epistemo ScienceGPT (CIE Stage 7-9)")
-st.write("Ask me for explanations, question papers, or diagrams!")
+st.set_page_config(page_title="Cambridge Science Tutor", page_icon="🔬")
+st.title("🔬 Cambridge Science Tutor")
+st.write("Ask for explanations or diagrams! (I am now using your Private Image API)")
 
 # --- API SETUP ---
 # 1. Google Gemini Key
-try:
-    api_key = st.secrets["GOOGLE_API_KEY"]
-    genai.configure(api_key=api_key)
-except KeyError:
-    st.error("🔴 Missing Google API Key! Please add it to your Streamlit Secrets.")
+if "GOOGLE_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+else:
+    st.error("Missing Google API Key.")
     st.stop()
 
-# --- THE BRAIN (System Instructions for Gemini) ---
-system_instruction = """
+# 2. Pollinations Key (CRITICAL for the new endpoint)
+if "POLLINATIONS_API_KEY" in st.secrets:
+    pollinations_key = st.secrets["POLLINATIONS_API_KEY"]
+else:
+    st.warning("⚠️ No Pollinations Key found. Images might be slow or fail.")
+    pollinations_key = None
+
+# --- THE BRAIN (Gemini Instructions) ---
+system_instructions = """
 You are a Cambridge Science Tutor for Stage 7-9 students. You are friendly, encouraging, and precise.
 
 IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
 ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they are 8th, their stage is 9th.
-ALSO: If the user mentions their stage in the beginning, remember that stage for all future queries and answers, unless they mention a different stage.
 
 ### RULE 1: SOURCE PRIORITY
 - First, ALWAYS check the content of the uploaded PDF files to answer a question.
@@ -36,102 +41,85 @@ ALSO: If the user mentions their stage in the beginning, remember that stage for
   "I'm sorry, the text generation in images isn't great, so I can't fix it. It was developed by a 10yr old, so what more can you expect?"
 
 - **IF THE USER ASKS FOR A NORMAL DIAGRAM:** If they just ask for a "diagram of a cell" or "picture of a heart" (without mentioning labels), you MUST output this specific command and nothing else:
-  IMAGE_GEN: [A high-quality scientific illustration of the topic, detailed, white background, no text, no words, no labels.]
+  IMAGE_GEN: [A high-quality scientific illustration of the topic, detailed, white background, no text, no words, no labels.] If you feel that the user is asking for a whole chapter mind map or diagram, create a infographic.
 
 ### RULE 3: QUESTION PAPERS
 - When asked to create a question paper, quiz, or test, strictly follow this structure:
   - Title: [Topic] Assessment
   - Section A: 5 Multiple Choice Questions/Fill in the blanks, etc. (1 mark each).
-  - Section B: 10 Short Answer Questions (3 marks each).
-  - Section C: 6 Long Answer Questions (5 marks each).
-  - Section D: 2 Think Like a Scientist Questions (2.5 marks each).
+  - Section B: 10 Short Answer Questions (2 marks each).
+  - Section C: 6 Long Answer Questions (3 marks each).
+  - Section D: 2 Think Like a Scientist Questions (HARD) (5 marks each).
   - A complete Answer Key at the very end.
 """
 
-# --- MODEL INITIALIZATION ---
-# Use 'gemini-1.5-flash-latest' to ensure you have the newest version
 model = genai.GenerativeModel(
     model_name="gemini-2.5-flash", 
-    system_instruction=system_instruction
+    system_instruction=system_instructions
 )
 
-# --- FILE HANDLING ---
-@st.cache_resource
-def get_textbook_content():
+# --- NEW FUNCTION: AUTHENTICATED IMAGE DOWNLOAD ---
+def get_image_authenticated(prompt):
+    # 1. URL Encode the prompt (e.g., "blue sky" -> "blue%20sky")
+    encoded_prompt = urllib.parse.quote(prompt)
     
-    pdf_files = ["CIE_9_WB.pdf", "CIE_8_WB.pdf", "CIE_7_WB.pdf"]
+    # 2. Use the PRIVATE endpoint you found
+    url = f"https://gen.pollinations.ai/image/{encoded_prompt}"
     
-    uploaded_parts = []
-    st.write("Checking for textbooks in the repository...") # Status message
+    # 3. Add the Authorization Header (The specific fix)
+    headers = {}
+    if pollinations_key:
+        headers["Authorization"] = f"Bearer {pollinations_key}"
+        # print(f"Using Authenticated API for: {prompt}") # Debugging
     
-    for pdf in pdf_files:
-        if os.path.exists(pdf):
-            try:
-                # The API uses the "display_name" for citations in the prompt
-                sample_file = genai.upload_file(path=pdf, display_name=pdf)
-                uploaded_parts.append(sample_file)
-                st.success(f"✅ Successfully loaded '{pdf}'!")
-            except Exception as e:
-                st.error(f"⚠️ Could not process '{pdf}'. Error: {e}")
-        else:
-            st.warning(f"🟡 Could not find the file '{pdf}'. Make sure it's uploaded to GitHub!")
-            
-    return uploaded_parts
-
-# Load files once and cache them
-if "files" not in st.session_state:
-    with st.spinner("Loading and reading textbooks... This might take a moment."):
-        st.session_state.files = get_textbook_content()
-        if not st.session_state.files:
-            st.error("No textbooks were loaded. The bot will rely on general knowledge only.")
-
-# --- HELPER FUNCTION: IMAGE GENERATION ---
-@st.cache_data
-def get_image_from_pollinations(prompt):
-    url = f"https://image.pollinations.ai/prompt/{prompt}?nologo=true"
     try:
-        response = requests.get(url)
-        response.raise_for_status() # Raises an error for bad responses (4xx or 5xx)
-        return response.content
-    except requests.exceptions.RequestException as e:
-        print(f"Pollinations request failed: {e}")
+        # Send the request with the headers
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code == 200:
+            return response.content
+        else:
+            st.error(f"Image API Error: {response.status_code}")
+            return None
+    except Exception as e:
+        st.error(f"Connection Error: {e}")
         return None
 
 # --- CHAT HISTORY ---
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display previous messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
-            st.image(message["content"], caption=message.get("caption", "Generated Diagram"))
+            st.image(message["content"], caption=message.get("caption"))
         else:
             st.markdown(message["content"])
 
 # --- MAIN CHAT LOOP ---
-if prompt := st.chat_input("What is your science question?"):
+if prompt := st.chat_input("Ask a science question..."):
     
-    # 1. Show user's message
+    # 1. Show User Message
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt, "is_image": False})
 
-    # 2. Prepare content for Gemini (Text + Files)
-    full_prompt_content = st.session_state.files + [prompt]
-
-    # 3. Generate response
+    # 2. Ask Gemini
     with st.chat_message("assistant"):
-        with st.spinner("🔬 Thinking..."):
+        with st.spinner("Thinking..."):
             try:
-                response = model.generate_content(full_prompt_content)
+                # Get text response
+                history = [{"role": m["role"], "parts": [m["content"]]} for m in st.session_state.messages if not m.get("is_image")]
+                chat = model.start_chat(history=history)
+                response = chat.send_message(prompt)
                 response_text = response.text.strip()
                 
-                # 4. Check for IMAGE_GEN command
+                # 3. Check for IMAGE_GEN command
                 if response_text.startswith("IMAGE_GEN:"):
                     image_prompt = response_text.replace("IMAGE_GEN:", "").strip()
-                    st.markdown(f"🎨 *Painting: {image_prompt}...*")
+                    st.markdown(f"🎨 *Generating high-quality image: {image_prompt}...*")
                     
-                    image_data = get_image_from_pollinations(image_prompt)
+                    # CALL THE NEW AUTHENTICATED FUNCTION
+                    image_data = get_image_authenticated(image_prompt)
                     
                     if image_data:
                         st.image(image_data, caption=image_prompt)
@@ -142,16 +130,11 @@ if prompt := st.chat_input("What is your science question?"):
                             "caption": image_prompt
                         })
                     else:
-                        st.error("Sorry, the image generator is busy or failed. Please try again.")
-                    
+                        st.error("Could not generate image.")
                 else:
-                    # Normal Text Answer (or the apology)
+                    # Normal Text
                     st.markdown(response_text)
-                    st.session_state.messages.append({
-                        "role": "assistant", 
-                        "content": response_text, 
-                        "is_image": False
-                    })
+                    st.session_state.messages.append({"role": "assistant", "content": response_text, "is_image": False})
                 
             except Exception as e:
-                st.error(f"An error occurred with the AI model: {e}")
+                st.error(f"Error: {e}")
