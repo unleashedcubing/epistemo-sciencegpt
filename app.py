@@ -1,14 +1,14 @@
 import streamlit as st
 import os
 import time
-import datetime
+import io
 from google import genai
 from google.genai import types
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="CIE Science Tutor", page_icon="🧬", layout="centered")
 
-# --- THEME CSS (Kept exactly as you requested) ---
+# --- THEME CSS ---
 st.markdown("""
 <style>
 /* Theme-aware app background */
@@ -137,46 +137,27 @@ ALSO: DO NOT INTRODUCE YOURSELF LIKE "I am Helix!" as I have already created and
 If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
 """
 
-# --- CACHING & UPLOAD FUNCTION ---
-def create_cached_content():
-    """Uploads files and creates a cache for them."""
+# --- TEXTBOOK UPLOADER (No Cache, Direct Upload) ---
+def upload_textbooks():
     pdf_filenames = ["CIE_7_WB.pdf", "CIE_8_WB.pdf", "CIE_9_WB.pdf", 
                      "CIE_7_SB_1.pdf", "CIE_8_SB_1.pdf", "CIE_9_SB_1.pdf", 
-                     "CIE_7_SB_2.pdf", "CIE_8_SB_2.pdf", "CIE_9_SB_2.pdf"]
-    
+                     "CIE_7_SB_2.pdf", "CIE_8_SB_2.pdf", "CIE_9_SB_2.pdf"] 
     active_files = []
-    
-    # 1. Upload files
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # Upload file
-                file_ref = client.files.upload(file=fn)
-                active_files.append(file_ref)
+                # Fresh upload for the session to ensure active permission handles
+                uploaded_file = client.files.upload(file=fn)
+                active_files.append(uploaded_file)
                 
-                # Wait for processing to complete (important for caching)
-                while file_ref.state.name == "PROCESSING":
+                # Wait for ACTIVE state (crucial for Gemini to read them)
+                while uploaded_file.state.name == "PROCESSING":
                     time.sleep(1)
-                    file_ref = client.files.get(name=file_ref.name)
+                    uploaded_file = client.files.get(name=uploaded_file.name)
                     
             except Exception as e:
                 st.sidebar.error(f"Error loading {fn}: {e}")
-
-    if not active_files:
-        return None
-
-    # 2. Create Cache
-    # Cache valid for 60 minutes (TTL)
-    cache = client.caches.create(
-        model="models/gemini-2.5-flash", # Explicitly using a model that supports caching
-        config=types.CreateCachedContentConfig(
-            display_name="CIE_Science_Textbooks_Cache",
-            system_instruction=SYSTEM_INSTRUCTION,
-            contents=active_files,
-            ttl="3600s" 
-        )
-    )
-    return cache.name
+    return active_files
 
 # --- THINKING ANIMATION ---
 def show_thinking_animation(message="Helix is thinking"):
@@ -198,17 +179,9 @@ if "messages" not in st.session_state:
         {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly science tutor here to help you ace your CIE exams! 🧬\n\nI can answer your doubts, draw diagrams, and create quizes! 🧪\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
     ]
 
-# --- LOAD/CREATE CACHE ---
-if "cache_name" not in st.session_state:
-    with st.spinner("Helix is reading and memorizing the Cambridge Workbooks... (This happens once)"):
-        try:
-            cache_name = create_cached_content()
-            if cache_name:
-                st.session_state.cache_name = cache_name
-            else:
-                st.error("Could not upload textbooks. Please check if files exist.")
-        except Exception as e:
-            st.error(f"Failed to create cache: {e}")
+if "textbook_handles" not in st.session_state:
+    with st.spinner("Helix is reading the Cambridge Workbooks..."):
+        st.session_state.textbook_handles = upload_textbooks()
 
 # --- DISPLAY CHAT ---
 for message in st.session_state.messages:
@@ -231,29 +204,17 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
             show_thinking_animation("🔍 Helix is searching the textbooks 📚")
         
         try:
-            # 2. TEXT RESPONSE (Using Cached Content)
-            if "cache_name" in st.session_state:
-                 # We DON'T pass 'contents' (textbooks) here because they are in the cache
-                 # We only pass the user prompt
-                text_response = client.models.generate_content(
-                    model="models/gemini-2.5-flash", # Must match the model used for caching
-                    contents=[prompt],
-                    config=types.GenerateContentConfig(
-                        cached_content=st.session_state.cache_name,
-                        tools=[{"google_search": {}}]
-                    )
+            # 2. TEXT RESPONSE (Gemini 2.5 Flash - Direct File Access)
+            # We send the file handles + prompt directly. 2.5 Flash handles this.
+            text_response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=st.session_state.textbook_handles + [prompt],
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    tools=[{"google_search": {}}]
                 )
-            else:
-                 # Fallback if cache failed (shouldn't happen if setup is correct)
-                 text_response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=[prompt],
-                     config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_INSTRUCTION,
-                        tools=[{"google_search": {}}]
-                    )
-                )
-
+            )
+            
             bot_text = text_response.text
             
             # Clear thinking animation and show response
@@ -261,7 +222,7 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # 3. IMAGE GENERATION (Gemini 3 Pro Multimodal - Separate Call)
+            # 3. IMAGE GENERATION (Gemini 3 Pro Multimodal)
             if "IMAGE_GEN:" in bot_text:
                 img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\\n")[0]
                 
@@ -272,7 +233,7 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
                 for attempt in range(2):
                     try:
                         image_response = client.models.generate_content(
-                            model="gemini-3-pro-image-preview", # Separate model for images
+                            model="gemini-3-pro-image-preview",
                             contents=[img_desc],
                             config=types.GenerateContentConfig(
                                 response_modalities=['TEXT', 'IMAGE']
@@ -296,9 +257,12 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
                             continue
                         else:
                             img_thinking_placeholder.empty()
-                            # Optional: don't crash app if image fails, just show text
-                            # raise inner_e 
+                            st.error(f"Image generation failed: {inner_e}")
 
         except Exception as e:
             thinking_placeholder.empty()
-            st.error(f"Helix encountered a technical glitch: {e}")
+            if "403" in str(e) or "PERMISSION_DENIED" in str(e):
+                st.error("Helix's connection to the workbooks timed out. Please refresh the page!")
+                del st.session_state.textbook_handles
+            else:
+                st.error(f"Helix encountered a technical glitch: {e}")
