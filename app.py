@@ -1,6 +1,5 @@
 import streamlit as st
 import os
-import io
 import time
 from google import genai
 from google.genai import types
@@ -21,7 +20,7 @@ client = genai.Client(api_key=api_key)
 
 # --- SYSTEM RULES ---
 SYSTEM_INSTRUCTION = """
-You are a Cambridge Science Tutor for Stage 7-9 students. You are friendly, encouraging, and precise.
+YYou are a Cambridge Science Tutor for Stage 7-9 students. You are friendly, encouraging, and precise.
 
 IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
 ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they are 8th, their stage is 9th.
@@ -53,7 +52,7 @@ def upload_textbooks():
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # Fresh upload ensures we have active permission handles
+                # Fresh upload ensures active permission handles
                 uploaded_file = client.files.upload(file=fn)
                 active_files.append(uploaded_file)
             except Exception as e:
@@ -72,7 +71,7 @@ if "textbook_handles" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
-            # We display the stored bytes directly
+            # Display stored bytes directly
             st.image(message["content"])
         else:
             st.markdown(message["content"])
@@ -85,7 +84,6 @@ if prompt := st.chat_input("Ask me a science question..."):
     with st.chat_message("assistant"):
         try:
             # 1. TEXT RESPONSE (Gemini 2.5 Flash)
-            # This handles the PDFs and Google Search logic
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=st.session_state.textbook_handles + [prompt],
@@ -101,26 +99,26 @@ if prompt := st.chat_input("Ask me a science question..."):
 
             # 2. IMAGE RESPONSE (Gemini 3 Pro)
             if "IMAGE_GEN:" in bot_text:
-                # Clean the prompt for the image model
                 img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                 
                 with st.status("🎨 Gemini 3 Pro is drawing your diagram..."):
-                    for attempt in range(2): # Simple retry for 503 errors
+                    # Retry loop for 503 errors
+                    for attempt in range(2): 
                         try:
                             image_response = client.models.generate_content(
                                 model="gemini-3-pro-image-preview",
-                                contents=[img_prompt if 'img_prompt' in locals() else img_desc],
+                                contents=[img_desc],
                                 config=types.GenerateContentConfig(
                                     response_modalities=['TEXT', 'IMAGE']
                                 )
                             )
                             
                             for part in image_response.parts:
-                                # ACCESS RAW BYTES DIRECTLY
-                                if part.image:
-                                    img_bytes = part.image.data
+                                # THE FIX: Use 'inline_data' to get the raw bytes
+                                if part.inline_data:
+                                    img_bytes = part.inline_data.data
                                     
-                                    # Display bytes directly to Streamlit (safe and attribute-free)
+                                    # Display bytes directly (No Pillow required here)
                                     st.image(img_bytes)
                                     
                                     # Save bytes directly to history
@@ -129,7 +127,7 @@ if prompt := st.chat_input("Ask me a science question..."):
                                         "content": img_bytes, 
                                         "is_image": True
                                     })
-                            break
+                            break # Success, exit retry loop
                         except Exception as inner_e:
                             if "503" in str(inner_e) and attempt == 0:
                                 time.sleep(2)
