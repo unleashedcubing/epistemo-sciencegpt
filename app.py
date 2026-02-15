@@ -9,116 +9,94 @@ from google.genai import types
 st.set_page_config(page_title="CIE Science Tutor", page_icon="🧬", layout="centered")
 
 # --- THEME TOGGLE IN SIDEBAR ---
-with st.sidebar:
-    st.markdown("### ⚙️ Settings")
-    
-    # Initialize theme preference in session state
-    if "theme_mode" not in st.session_state:
-        st.session_state.theme_mode = "dark"
-    
-    # Toggle button
-    theme_toggle = st.toggle("🌙 Dark Mode", value=(st.session_state.theme_mode == "dark"))
-    st.session_state.theme_mode = "dark" if theme_toggle else "light"
+st.markdown("""
+<style>
+/* Theme-aware app background (works in both light and dark Streamlit themes) */
+.stApp {
+  background:
+    radial-gradient(800px circle at 50% 0%,
+      rgba(0, 212, 255, 0.08),
+      rgba(0, 212, 255, 0.00) 60%),
+    var(--background-color);
+  color: var(--text-color);
+}
 
-# Custom CSS for a cool "Science Lab" look + Thinking Animation (Light/Dark Mode Compatible)
-# Apply theme-specific styles based on toggle
-if st.session_state.theme_mode == "dark":
-    bg_color = "#0e1117"
-    text_color = "#ffffff"
-    secondary_bg = "#1a1d24"
-    gradient_color = "rgba(0, 212, 255, 0.08)"
-else:
-    bg_color = "#ffffff"
-    text_color = "#262730"
-    secondary_bg = "#f0f2f6"
-    gradient_color = "rgba(0, 212, 255, 0.05)"
+/* Glowing title */
+.big-title {
+  font-family: 'Inter', sans-serif;
+  color: #00d4ff;
+  text-align: center;
+  font-size: 48px;
+  font-weight: 1200;
+  letter-spacing: -3px;
+  margin-bottom: 0px;
 
-st.markdown(f"""
-    <style>
-    /* Theme-aware styling */
-    .stApp {{
-        background: radial-gradient(800px circle at 50% 0%,
-                    {gradient_color},
-                    rgba(0, 212, 255, 0.00) 60%),
-                    {bg_color};
-        color: {text_color};
-    }}
-    
-    .big-title {{
-        font-family: 'Inter', sans-serif;
-        color: #00d4ff;
-        text-align: center;
-        font-size: 48px;
-        font-weight: 1200;
-        letter-spacing: -3px;
-        margin-bottom: 0px;
-    }}
-    
-    .subtitle {{
-        text-align: center;
-        color: {text_color};
-        opacity: 0.55;
-        font-size: 18px;
-        margin-bottom: 30px;
-    }}
-    
-    /* Thinking Animation Styles */
-    .thinking-container {{
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 12px 16px;
-        background-color: {secondary_bg};
-        border-radius: 8px;
-        margin: 10px 0;
-        border-left: 3px solid #fc8404;
-    }}
-    
-    .thinking-text {{
-        color: #fc8404;
-        font-size: 14px;
-        font-weight: 600;
-    }}
-    
-    .thinking-dots {{
-        display: flex;
-        gap: 4px;
-    }}
-    
-    .thinking-dot {{
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        background-color: #fc8404;
-        animation: thinking-pulse 1.4s ease-in-out infinite;
-    }}
-    
-    .thinking-dot:nth-child(1) {{
-        animation-delay: 0s;
-    }}
-    
-    .thinking-dot:nth-child(2) {{
-        animation-delay: 0.2s;
-    }}
-    
-    .thinking-dot:nth-child(3) {{
-        animation-delay: 0.4s;
-    }}
-    
-    @keyframes thinking-pulse {{
-        0%, 60%, 100% {{
-            opacity: 0.3;
-            transform: scale(0.8);
-        }}
-        30% {{
-            opacity: 1;
-            transform: scale(1.2);
-        }}
-    }}
-    </style>
-    <div class="big-title">🧬 helix.ai</div>
-    <div class="subtitle">Your CIE Science Tutor for Grade 6-8!</div>
-    """, unsafe_allow_html=True)
+  /* Glow (layered text-shadow) */
+  text-shadow:
+    0 0 6px rgba(0, 212, 255, 0.55),
+    0 0 18px rgba(0, 212, 255, 0.35),
+    0 0 42px rgba(0, 212, 255, 0.20);
+}
+
+/* Optional: gentle pulsing glow */
+@keyframes helix-glow {
+  0%, 100% {
+    text-shadow:
+      0 0 6px rgba(0, 212, 255, 0.45),
+      0 0 18px rgba(0, 212, 255, 0.28),
+      0 0 42px rgba(0, 212, 255, 0.16);
+  }
+  50% {
+    text-shadow:
+      0 0 8px rgba(0, 212, 255, 0.75),
+      0 0 24px rgba(0, 212, 255, 0.45),
+      0 0 54px rgba(0, 212, 255, 0.24);
+  }
+}
+.big-title {
+  animation: helix-glow 2.2s ease-in-out infinite;
+}
+
+.subtitle {
+  text-align: center;
+  color: var(--text-color);
+  opacity: 0.60;
+  font-size: 18px;
+  margin-bottom: 30px;
+}
+
+/* Thinking animation uses theme secondary bg */
+.thinking-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background-color: var(--secondary-background-color);
+  border-radius: 8px;
+  margin: 10px 0;
+  border-left: 3px solid #fc8404;
+}
+.thinking-text { color: #fc8404; font-size: 14px; font-weight: 600; }
+.thinking-dots { display: flex; gap: 4px; }
+.thinking-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background-color: #fc8404;
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+.thinking-dot:nth-child(1){ animation-delay: 0s; }
+.thinking-dot:nth-child(2){ animation-delay: 0.2s; }
+.thinking-dot:nth-child(3){ animation-delay: 0.4s; }
+
+@keyframes thinking-pulse {
+  0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); }
+  30% { opacity: 1; transform: scale(1.2); }
+}
+</style>
+
+<div class="big-title">🧬 helix.ai</div>
+<div class="subtitle">Your CIE Science Tutor for Grade 6-8!</div>
+""", unsafe_allow_html=True)
+
 
 # --- API SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
