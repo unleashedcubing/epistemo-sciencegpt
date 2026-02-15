@@ -9,7 +9,7 @@ from PIL import Image
 st.set_page_config(page_title="Cambridge Science Tutor", page_icon="🔬")
 
 st.title("🔬 Cambridge Science Tutor")
-st.caption("Powered by Gemini 2.5 Flash & Gemini 3 Pro")
+st.caption("Using Gemini 2.5 Flash (Brain) & Gemini 3 Pro (Vision)")
 
 # --- API SETUP ---
 if "GOOGLE_API_KEY" in st.secrets:
@@ -35,7 +35,7 @@ ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they 
 ### RULE 2: IMAGE GENERATION (STRICT)
 
 - **IF THE USER ASKS FOR A NORMAL DIAGRAM:** If they just ask for a "diagram of a cell" or "picture of a heart", you MUST output this specific command and nothing else:
-  IMAGE_GEN: [A high-quality scientific illustration or infographic of the topic, detailed, white background, labels.]
+  IMAGE_GEN: [A high-quality scientific illustration of the topic, detailed, white background, with labels]
 
 ### RULE 3: QUESTION PAPERS
 - When asked to create a question paper, quiz, or test, strictly follow this structure:
@@ -47,7 +47,7 @@ ALSO: Remind the user ONLY ONCE that their stage is their grade + 1, so if they 
   - A complete Answer Key at the very end.
 """
 
-# --- FILE UPLOADER (Fresh for each session to avoid 403 errors) ---
+# --- TEXTBOOK UPLOADER ---
 def upload_textbooks():
     pdf_filenames = ["CIE_7_WB.pdf", "CIE_8_WB.pdf", "CIE_9_WB.pdf"] 
     active_files = []
@@ -55,7 +55,7 @@ def upload_textbooks():
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # Upload fresh to ensure permissions
+                # Fresh upload for the session to avoid permission errors
                 uploaded_file = client.files.upload(file=fn)
                 active_files.append(uploaded_file)
             except Exception as e:
@@ -67,7 +67,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 if "textbook_handles" not in st.session_state:
-    with st.spinner("Preparing textbooks..."):
+    with st.spinner("Loading science workbooks..."):
         st.session_state.textbook_handles = upload_textbooks()
 
 # --- DISPLAY CHAT ---
@@ -85,7 +85,7 @@ if prompt := st.chat_input("Ask a science question..."):
 
     with st.chat_message("assistant"):
         try:
-            # Prepare content
+            # Combine textbooks and prompt
             contents = st.session_state.textbook_handles + [prompt]
 
             # 1. TEXT RESPONSE (Gemini 2.5 Flash)
@@ -106,7 +106,7 @@ if prompt := st.chat_input("Ask a science question..."):
             if "IMAGE_GEN:" in bot_text:
                 img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                 
-                with st.status("🎨 Creating your diagram..."):
+                with st.status("🎨 Gemini 3 Pro is drawing..."):
                     image_response = client.models.generate_content(
                         model="gemini-3-pro-image-preview",
                         contents=[img_desc],
@@ -116,25 +116,30 @@ if prompt := st.chat_input("Ask a science question..."):
                     )
                     
                     for part in image_response.parts:
-                        if image := part.as_image():
-                            # FIX: Convert to RGB to ensure standard attributes exist
-                            image_rgb = image.convert("RGB")
-                            st.image(image_rgb)
+                        # FIX: Check for 'image' data in the part directly
+                        if part.image:
+                            # 1. Get the raw bytes from the Google API
+                            raw_image_bytes = part.image.data
                             
-                            # Save to bytes for history
+                            # 2. Open those bytes using the real Pillow (PIL) library
+                            pil_image = Image.open(io.BytesIO(raw_image_bytes))
+                            
+                            # 3. Now we can safely convert and display
+                            pil_image_rgb = pil_image.convert("RGB")
+                            st.image(pil_image_rgb)
+                            
+                            # 4. Save to bytes for chat history
                             buf = io.BytesIO()
-                            image_rgb.save(buf, format="PNG")
-                            img_bytes = buf.getvalue()
-                            
+                            pil_image_rgb.save(buf, format="PNG")
                             st.session_state.messages.append({
                                 "role": "assistant", 
-                                "content": img_bytes, 
+                                "content": buf.getvalue(), 
                                 "is_image": True
                             })
 
         except Exception as e:
             if "403" in str(e) or "PERMISSION_DENIED" in str(e):
-                st.error("Session expired. Please try your question again; I'm refreshing the textbooks now.")
+                st.error("Session refreshed. Please send your question again.")
                 del st.session_state.textbook_handles
             else:
                 st.error(f"Something went wrong: {e}")
