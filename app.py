@@ -236,7 +236,7 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
                  # We DON'T pass 'contents' (textbooks) here because they are in the cache
                  # We only pass the user prompt
                 text_response = client.models.generate_content(
-                    model="models/gemini-1.5-flash-002", # Must match the model used for caching
+                    model="models/gemini-2.5-flash", # Must match the model used for caching
                     contents=[prompt],
                     config=types.GenerateContentConfig(
                         cached_content=st.session_state.cache_name,
