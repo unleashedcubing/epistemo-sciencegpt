@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import time
-import io
+from pathlib import Path
 from google import genai
 from google.genai import types
 
@@ -93,10 +93,32 @@ else:
 
 client = genai.Client(api_key=api_key)
 
-# --- SYSTEM INSTRUCTIONS ---
-SYSTEM_INSTRUCTION = """PUT YOUR FULL SYSTEM INSTRUCTION HERE (exactly as you wrote it)"""
+# --- CONFIG ---
+MODEL_TEXT = "gemini-2.5-flash"
+MODEL_IMAGE = "gemini-3-pro-image-preview"
+CACHE_TTL = "3600s"          # 1 hour
+MAX_TURNS = 7
+SUMMARY_TRIGGER_MSGS = 22
+THINK_STEP_SECONDS = 3
+ENABLE_GOOGLE_SEARCH_TOOL = True
 
-# --- Thinking bubble ---
+# Put your PDFs in repo root OR in ./books
+BOOK_DIRS = [Path("."), Path("./books")]
+
+PDF_FILENAMES = [
+    "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
+    "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
+    "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
+    "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
+    "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
+]
+
+# --- SYSTEM INSTRUCTIONS ---
+SYSTEM_INSTRUCTION = """
+PUT YOUR FULL SYSTEM INSTRUCTION HERE (exactly as you wrote it)
+"""
+
+# --- UI helper ---
 def show_thinking_animation(message="Helix is thinking"):
     thinking_html = f"""
     <div class="thinking-container">
@@ -110,8 +132,8 @@ def show_thinking_animation(message="Helix is thinking"):
     """
     return st.markdown(thinking_html, unsafe_allow_html=True)
 
-# --- Rolling chat context (last 7 turns) ---
-def build_history_contents(messages, max_turns=7):
+# --- Memory helpers ---
+def build_history_contents(messages, max_turns=MAX_TURNS):
     text_msgs = [m for m in messages if (not m.get("is_image")) and m.get("role") in ("user", "assistant")]
     window = text_msgs[-(2 * max_turns):]
     contents = []
@@ -120,12 +142,14 @@ def build_history_contents(messages, max_turns=7):
         contents.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
     return contents
 
-def maybe_summarize_old_chat(messages, keep_last_msgs=22):
+def maybe_summarize_old_chat(messages, keep_last_msgs=SUMMARY_TRIGGER_MSGS):
     if len(messages) <= keep_last_msgs:
         return
+
     old = [m for m in messages[:-keep_last_msgs] if (not m.get("is_image")) and m.get("role") in ("user", "assistant")]
     if not old:
         return
+
     old_text = "\n".join([f'{m["role"].upper()}: {m["content"]}' for m in old])[-12000:]
     prompt = (
         "Summarize the conversation so far in <= 10 bullet points.\n"
@@ -133,41 +157,69 @@ def maybe_summarize_old_chat(messages, keep_last_msgs=22):
         "Do NOT add new facts.\n\n"
         f"{old_text}"
     )
+
     resp = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=MODEL_TEXT,
         contents=[prompt],
         config=types.GenerateContentConfig(system_instruction="You are a precise summarizer.")
     )
     st.session_state.chat_summary = (resp.text or "").strip()
 
-# --- Upload ALL PDFs once per session ---
-def upload_textbooks():
-    pdf_filenames = [
-        "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
-        "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
-        "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
-        "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
-        "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
-    ]
-    handles = []
-    for fn in pdf_filenames:
-        if os.path.exists(fn):
-            try:
-                f = client.files.upload(file=fn)
-                while f.state.name == "PROCESSING":
-                    time.sleep(1)
-                    f = client.files.get(name=f.name)
-                handles.append(f)
-            except Exception as e:
-                st.sidebar.error(f"Error loading {fn}: {e}")
-    return handles
+# --- File path resolve ---
+def resolve_pdf_paths():
+    found = []
+    missing = []
+    for fn in PDF_FILENAMES:
+        p = None
+        for d in BOOK_DIRS:
+            cand = d / fn
+            if cand.exists():
+                p = cand
+                break
+        if p:
+            found.append(p)
+        else:
+            missing.append(fn)
+    return found, missing
 
-# --- Explicit cache for ALL PDFs ---
-def ensure_textbook_cache(all_pdf_handles):
+# --- Upload PDFs to Gemini Files API (once per session) ---
+def upload_pdfs_to_gemini(pdf_paths):
+    uploaded_names = []
+    for p in pdf_paths:
+        try:
+            f = client.files.upload(file=str(p))
+            while f.state.name == "PROCESSING":
+                time.sleep(1)
+                f = client.files.get(name=f.name)
+            uploaded_names.append(f.name)  # store stable name, not the whole object
+        except Exception as e:
+            st.sidebar.error(f"Upload failed {p.name}: {e}")
+    return uploaded_names
+
+def get_uploaded_files(file_names):
+    files = []
+    for name in file_names:
+        try:
+            files.append(client.files.get(name=name))
+        except Exception:
+            pass
+    return files
+
+def chunk_list(xs, n):
+    for i in range(0, len(xs), n):
+        yield xs[i:i+n]
+
+# --- Explicit cache of ALL PDFs ---
+def ensure_textbook_cache(uploaded_file_names):
     """
-    Creates (or re-creates) an explicit cache containing ALL PDFs + system instruction.
-    Stored in st.session_state.textbook_cache_name.
+    Creates or reuses an explicit cache containing ALL PDFs + system instruction.
+    Stores cache name in session_state.textbook_cache_name.
     """
+    if not uploaded_file_names:
+        st.error("No PDFs were uploaded to Gemini (uploaded_file_names is empty). Check your PDF paths on Streamlit Cloud.")
+        st.stop()
+
+    # Reuse cache if still valid
     cache_name = st.session_state.get("textbook_cache_name", "")
     if cache_name:
         try:
@@ -176,42 +228,70 @@ def ensure_textbook_cache(all_pdf_handles):
         except Exception:
             st.session_state.textbook_cache_name = ""
 
+    # Build cache contents using Part.from_uri (SDK docs show this pattern for PDF caching)
+    uploaded_files = get_uploaded_files(uploaded_file_names)
+    if not uploaded_files:
+        st.error("Could not re-fetch uploaded PDF handles from Gemini. Try clearing session / rebuilding.")
+        st.stop()
+
+    parts = [types.Part.from_uri(file_uri=f.uri, mime_type="application/pdf") for f in uploaded_files]
+
+    # Avoid one mega-Content with too many parts; chunk into multiple contents
+    contents = []
+    for part_chunk in chunk_list(parts, 20):
+        contents.append(types.Content(role="user", parts=part_chunk))
+
     cache = client.caches.create(
-        model="gemini-2.5-flash",
+        model=MODEL_TEXT,
         config=types.CreateCachedContentConfig(
             display_name="helix-all-pdfs",
             system_instruction=SYSTEM_INSTRUCTION,
-            contents=all_pdf_handles,
-            ttl="3600s"  # explicit caching default is 1 hour if not set; setting it makes it obvious [page:0]
+            contents=contents,
+            ttl=CACHE_TTL,
         )
     )
+
     st.session_state.textbook_cache_name = cache.name
     return cache.name
+
+# --- Sidebar debug controls ---
+with st.sidebar:
+    st.subheader("Debug")
+    if st.button("Rebuild cache"):
+        st.session_state.textbook_cache_name = ""
+        st.rerun()
 
 # --- INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content":
-         "👋 **Hey there! I'm Helix!**\n\n"
-         "I'm your friendly CIE tutor here to help you ace your exams! 📖\n\n"
-         "**Quick Reminder:** Stage is usually **Grade + 1**.\n"
-         "*(Example: Grade 7 → Stage 8)*\n\n"
-         "What are we learning today?"}
+        {"role": "assistant",
+         "content": "👋 **Hey there! I'm Helix!**\n\nWhat are we learning today?"}
     ]
 
 if "chat_summary" not in st.session_state:
     st.session_state.chat_summary = ""
 
-if "all_pdf_handles" not in st.session_state:
-    with st.spinner("Helix is uploading all PDFs (one-time)..."):
-        st.session_state.all_pdf_handles = upload_textbooks()
+if "uploaded_pdf_file_names" not in st.session_state:
+    pdf_paths, missing = resolve_pdf_paths()
+
+    with st.sidebar:
+        st.caption(f"Found PDFs: {len(pdf_paths)} / {len(PDF_FILENAMES)}")
+        if missing:
+            st.warning("Missing PDFs:\n" + "\n".join(missing))
+
+    if not pdf_paths:
+        st.error("No PDFs found on disk. Put them in repo root or ./books with the exact filenames.")
+        st.stop()
+
+    with st.spinner("Uploading PDFs to Gemini (one-time per session)..."):
+        st.session_state.uploaded_pdf_file_names = upload_pdfs_to_gemini(pdf_paths)
 
 if "textbook_cache_name" not in st.session_state:
     st.session_state.textbook_cache_name = ""
 
 if not st.session_state.textbook_cache_name:
-    with st.spinner("Helix is building the context cache (one-time)..."):
-        ensure_textbook_cache(st.session_state.all_pdf_handles)
+    with st.spinner("Building explicit context cache (one-time per session)..."):
+        ensure_textbook_cache(st.session_state.uploaded_pdf_file_names)
 
 # --- DISPLAY CHAT ---
 for message in st.session_state.messages:
@@ -222,7 +302,7 @@ for message in st.session_state.messages:
             st.markdown(message["content"])
 
 # --- MAIN CHAT LOOP ---
-if prompt := st.chat_input("Ask Helix a question from your books, create diagrams, quizzes and more..."):
+if prompt := st.chat_input("Ask Helix a question..."):
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
@@ -230,46 +310,46 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
         thinking_placeholder = st.empty()
 
         try:
-            # Keep animated bubble + change text (no dropdown)
             with thinking_placeholder:
                 show_thinking_animation("🔍 Helix is checking ALL textbooks 📚")
-            time.sleep(3)
+            time.sleep(THINK_STEP_SECONDS)
 
             with thinking_placeholder:
                 show_thinking_animation("🧾 Helix is confirming sources…")
-            time.sleep(3)
+            time.sleep(THINK_STEP_SECONDS)
 
             with thinking_placeholder:
                 show_thinking_animation("🧠 Helix is connecting ideas…")
-            time.sleep(3)
+            time.sleep(THINK_STEP_SECONDS)
 
             with thinking_placeholder:
                 show_thinking_animation("✍️ Helix is forming your answer…")
-            # (We keep this bubble visible while the API call runs.)
 
-            # Conversation trimming (Perplexity-like)
-            maybe_summarize_old_chat(st.session_state.messages, keep_last_msgs=22)
-            history_contents = build_history_contents(st.session_state.messages, max_turns=7)
-
-            summary_note = ""
-            if st.session_state.chat_summary.strip():
-                summary_note = "Conversation summary (for context):\n" + st.session_state.chat_summary.strip()
+            # rolling memory
+            maybe_summarize_old_chat(st.session_state.messages, keep_last_msgs=SUMMARY_TRIGGER_MSGS)
+            history_contents = build_history_contents(st.session_state.messages, max_turns=MAX_TURNS)
 
             request_contents = []
-            if summary_note:
-                request_contents.append(summary_note)
+            if st.session_state.chat_summary.strip():
+                request_contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text="Conversation summary:\n" + st.session_state.chat_summary.strip())],
+                    )
+                )
             request_contents.extend(history_contents)
 
-            # Ensure cache still exists (TTL expiry / errors)
-            cache_name = ensure_textbook_cache(st.session_state.all_pdf_handles)
+            cache_name = ensure_textbook_cache(st.session_state.uploaded_pdf_file_names)
 
-            # Use cached PDFs (ALL PDFs) instead of re-sending them every time
+            tools = [{"google_search": {}}] if ENABLE_GOOGLE_SEARCH_TOOL else None
+
             text_response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model=MODEL_TEXT,
                 contents=request_contents,
                 config=types.GenerateContentConfig(
-                    cached_content=cache_name
-                )
+                    cached_content=cache_name,
+                    tools=tools,
+                ),
             )
 
             bot_text = text_response.text or ""
@@ -278,15 +358,15 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # Debug: show whether caching hit (optional)
+            # Cache-hit debug (optional)
             try:
                 cc = getattr(text_response.usage_metadata, "cached_content_token_count", None)
                 if cc is not None:
-                    st.sidebar.caption(f"cached_content_token_count: {cc}")  # should be > 0 on cache hits [page:0]
+                    st.sidebar.caption(f"cached_content_token_count: {cc}")
             except Exception:
                 pass
 
-            # --- IMAGE GENERATION (unchanged) ---
+            # --- IMAGE GENERATION ---
             if "IMAGE_GEN:" in bot_text:
                 img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\\n")[0]
 
@@ -297,38 +377,30 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
                 for attempt in range(2):
                     try:
                         image_response = client.models.generate_content(
-                            model="gemini-3-pro-image-preview",
+                            model=MODEL_IMAGE,
                             contents=[img_desc],
-                            config=types.GenerateContentConfig(
-                                response_modalities=['TEXT', 'IMAGE']
-                            )
+                            config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
                         )
                         for part in image_response.parts:
                             if part.inline_data:
                                 img_bytes = part.inline_data.data
                                 img_status.empty()
                                 st.image(img_bytes, caption="Generated by Helix")
-                                st.session_state.messages.append({
-                                    "role": "assistant",
-                                    "content": img_bytes,
-                                    "is_image": True
-                                })
+                                st.session_state.messages.append(
+                                    {"role": "assistant", "content": img_bytes, "is_image": True}
+                                )
                         break
                     except Exception as inner_e:
                         if "503" in str(inner_e) and attempt == 0:
                             time.sleep(2)
                             continue
-                        else:
-                            img_status.empty()
-                            st.error(f"Image generation failed: {inner_e}")
+                        img_status.empty()
+                        st.error(f"Image generation failed: {inner_e}")
 
         except Exception as e:
             thinking_placeholder.empty()
             if "403" in str(e) or "PERMISSION_DENIED" in str(e):
-                st.error("Helix's connection to the books timed out. Please refresh the page!")
-                if "all_pdf_handles" in st.session_state:
-                    del st.session_state.all_pdf_handles
-                if "textbook_cache_name" in st.session_state:
-                    st.session_state.textbook_cache_name = ""
+                st.error("Helix's connection timed out. Please refresh the page!")
+                st.session_state.textbook_cache_name = ""
             else:
                 st.error(f"Helix encountered a technical glitch: {e}")
