@@ -139,8 +139,7 @@ If a user asks you to reply in Armaan Style, you have to explain in expert physi
 
 # --- TEXTBOOK UPLOADER (No Cache, Direct Upload) ---
 def upload_textbooks():
-    pdf_filenames = ["CIE_9_WB_Sci.pdf","CIE_9_WB_Math.pdf","CIE_8_WB_ANS_Sci_Math.pdf","CIE_8_SB_Math.pdf","CIE_8_SB_1_Sci.pdf","CIE_8_SB_1_Eng.pdf","CIE_7_WB_Sci.pdf","CIE_7_WB_Eng.pdf","CIE_7_WB_ANS_Math.pdf","CIE_7_SB_2_Sci.pdf","CIE_7_SB_1_Eng.pdf","CIE_7_SB_Eng.pdf","CIE_9_SB_1_Sci.pdf","CIE_8_SB_2_Sci.pdf","CIE_8_SB_2_Eng.pdf","CIE_7_WB.pdf","CIE_7_SB.pdf","CIE_9_WB.pdf","CIE_7_SB_ANS.pdf","CIE_8_WB_Sci.pdf"]
-
+    pdf_filenames = ["CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf", "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf", "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf", "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf", "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"]
     active_files = []
     for fn in pdf_filenames:
         if os.path.exists(fn):
