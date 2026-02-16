@@ -11,7 +11,6 @@ st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 # --- THEME CSS ---
 st.markdown("""
 <style>
-/* Theme-aware app background */
 .stApp {
   background:
     radial-gradient(800px circle at 50% 0%,
@@ -20,8 +19,6 @@ st.markdown("""
     var(--background-color);
   color: var(--text-color);
 }
-
-/* Glowing title */
 .big-title {
   font-family: 'Inter', sans-serif;
   color: #00d4ff;
@@ -36,7 +33,6 @@ st.markdown("""
     0 0 42px rgba(0, 212, 255, 0.20);
   animation: helix-glow 2.2s ease-in-out infinite;
 }
-
 @keyframes helix-glow {
   0%, 100% {
     text-shadow:
@@ -51,7 +47,6 @@ st.markdown("""
       0 0 54px rgba(0, 212, 255, 0.24);
   }
 }
-
 .subtitle {
   text-align: center;
   color: var(--text-color);
@@ -59,8 +54,6 @@ st.markdown("""
   font-size: 18px;
   margin-bottom: 30px;
 }
-
-/* Thinking Animation */
 .thinking-container {
   display: flex;
   align-items: center;
@@ -81,7 +74,6 @@ st.markdown("""
 .thinking-dot:nth-child(1){ animation-delay: 0s; }
 .thinking-dot:nth-child(2){ animation-delay: 0.2s; }
 .thinking-dot:nth-child(3){ animation-delay: 0.4s; }
-
 @keyframes thinking-pulse {
   0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); }
   30% { opacity: 1; transform: scale(1.2); }
@@ -101,15 +93,27 @@ else:
 
 client = genai.Client(api_key=api_key)
 
+# --- MODELS ---
 MODEL_TEXT = "gemini-2.5-flash"
 MODEL_IMAGE = "gemini-3-pro-image-preview"
 
-# --- SETTINGS YOU ASKED FOR ---
+# --- SETTINGS ---
 MAX_TURNS = 7
+SUMMARY_TRIGGER_MSGS = 22
 THINK_STEP_SECONDS = 3
-CACHE_TTL = "3600s"  # 60 minutes
 
-# --- SYSTEM INSTRUCTIONS (your full block) ---
+ENABLE_GOOGLE_SEARCH_TOOL = True
+
+# Upload robustness
+UPLOAD_RETRIES = 4
+UPLOAD_BASE_SLEEP = 1.5     # exponential backoff base
+UPLOAD_BETWEEN_FILES = 0.4  # small spacing
+
+# Explicit cache TTL
+CACHE_TTL = "3600s"         # 60 minutes
+CACHE_CHUNK_PARTS = 20      # PDFs per Content chunk for cache creation
+
+# --- SYSTEM INSTRUCTIONS (your exact block) ---
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
@@ -258,7 +262,7 @@ Chapter 7 • Testing your skills
 If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist/mathematician/writer terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
 """
 
-# --- Thinking Animation ---
+# --- Thinking bubble ---
 def show_thinking_animation(message="Helix is thinking"):
     thinking_html = f"""
     <div class="thinking-container">
@@ -282,7 +286,7 @@ def build_history_contents(messages, max_turns=MAX_TURNS):
         contents.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
     return contents
 
-def maybe_summarize_old_chat(messages, keep_last_msgs=22):
+def maybe_summarize_old_chat(messages, keep_last_msgs=SUMMARY_TRIGGER_MSGS):
     if len(messages) <= keep_last_msgs:
         return
     old = [m for m in messages[:-keep_last_msgs] if (not m.get("is_image")) and m.get("role") in ("user", "assistant")]
@@ -302,40 +306,74 @@ def maybe_summarize_old_chat(messages, keep_last_msgs=22):
     )
     st.session_state.chat_summary = (resp.text or "").strip()
 
-# --- PDF discovery (ALL PDFs committed in repo) ---
+# --- PDF discovery (ALL PDFs in repo) ---
 BASE_DIR = Path(__file__).resolve().parent
 
-def find_all_pdfs():
-    pdfs = sorted([p for p in BASE_DIR.rglob("*.pdf") if p.is_file()])
-    return pdfs
+def _skip_path(p: Path) -> bool:
+    s = str(p)
+    bad = ("/.git/", "/__pycache__/", "/.venv/", "/venv/", "/site-packages/")
+    return any(x in s for x in bad)
 
-# --- Upload PDFs to Gemini Files API (once per session) ---
-def upload_pdfs_to_gemini(pdf_paths):
-    uploaded_file_names = []
-    for p in pdf_paths:
+def find_all_pdfs():
+    pdfs = []
+    for p in BASE_DIR.rglob("*.pdf"):
+        if p.is_file() and (not _skip_path(p)):
+            pdfs.append(p)
+    return sorted(pdfs)
+
+def mb(nbytes):
+    return round(nbytes / (1024 * 1024), 2)
+
+# --- Upload PDFs to Gemini with retries/backoff ---
+def upload_one_pdf(path: Path):
+    last_err = None
+    for attempt in range(UPLOAD_RETRIES):
         try:
-            f = client.files.upload(file=str(p))
+            if attempt > 0:
+                time.sleep(UPLOAD_BASE_SLEEP * (2 ** (attempt - 1)))
+
+            f = client.files.upload(
+                file=str(path),
+                config=dict(mime_type="application/pdf"),
+            )
             while f.state.name == "PROCESSING":
                 time.sleep(1)
                 f = client.files.get(name=f.name)
-            uploaded_file_names.append(f.name)
+
+            return f.name, None
         except Exception as e:
-            st.sidebar.error(f"Upload failed {p.name}: {e}")
-    return uploaded_file_names
+            last_err = e
+    return None, last_err
+
+def upload_all_pdfs(pdf_paths):
+    uploaded_names = []
+    failures = []
+    for p in pdf_paths:
+        name, err = upload_one_pdf(p)
+        if name:
+            uploaded_names.append(name)
+        else:
+            failures.append((p, err))
+        time.sleep(UPLOAD_BETWEEN_FILES)
+    return uploaded_names, failures
 
 def get_uploaded_files(file_names):
-    files = []
-    for name in file_names:
+    out = []
+    for n in file_names:
         try:
-            files.append(client.files.get(name=name))
+            out.append(client.files.get(name=n))
         except Exception:
             pass
-    return files
+    return out
 
-# --- Explicit cache (ALL PDFs + system instruction) ---
+def chunk_list(xs, n):
+    for i in range(0, len(xs), n):
+        yield xs[i:i+n]
+
+# --- Explicit cache (ALL PDFs) ---
 def ensure_textbook_cache(uploaded_pdf_file_names):
     if not uploaded_pdf_file_names:
-        st.error("0 PDFs uploaded to Gemini, so the cache cannot be created. Check PDF discovery / paths.")
+        st.error("0 PDFs uploaded to Gemini, so the cache cannot be created. See sidebar for upload failures.")
         st.stop()
 
     cache_name = st.session_state.get("textbook_cache_name", "")
@@ -348,30 +386,36 @@ def ensure_textbook_cache(uploaded_pdf_file_names):
 
     uploaded_files = get_uploaded_files(uploaded_pdf_file_names)
     if not uploaded_files:
-        st.error("Could not re-fetch uploaded PDF handles from Gemini. Refresh and try again.")
+        st.error("Could not re-fetch uploaded file handles via client.files.get(). Force re-upload from sidebar.")
         st.stop()
+
+    # Create cache contents as Content(role='user', parts=[Part.from_uri(...), ...])
+    parts = [types.Part.from_uri(file_uri=f.uri, mime_type="application/pdf") for f in uploaded_files]
+    contents = [types.Content(role="user", parts=chunk) for chunk in chunk_list(parts, CACHE_CHUNK_PARTS)]
 
     cache = client.caches.create(
         model=MODEL_TEXT,
         config=types.CreateCachedContentConfig(
-            display_name="helix-all-pdfs",
+            contents=contents,
             system_instruction=SYSTEM_INSTRUCTION,
-            contents=uploaded_files,
+            display_name="helix-all-pdfs",
             ttl=CACHE_TTL,
         ),
     )
     st.session_state.textbook_cache_name = cache.name
     return cache.name
 
-# --- Sidebar tools ---
+# --- Sidebar controls + debug ---
 with st.sidebar:
     st.subheader("Helix Debug")
-    if st.button("Rebuild cache (force)"):
-        st.session_state.textbook_cache_name = ""
+
+    if st.button("Force re-upload PDFs"):
+        for k in ("uploaded_pdf_file_names", "textbook_cache_name"):
+            if k in st.session_state:
+                del st.session_state[k]
         st.rerun()
-    if st.button("Re-upload PDFs (force)"):
-        if "uploaded_pdf_file_names" in st.session_state:
-            del st.session_state.uploaded_pdf_file_names
+
+    if st.button("Force rebuild cache"):
         st.session_state.textbook_cache_name = ""
         st.rerun()
 
@@ -384,25 +428,43 @@ if "messages" not in st.session_state:
 if "chat_summary" not in st.session_state:
     st.session_state.chat_summary = ""
 
-if "uploaded_pdf_file_names" not in st.session_state:
-    pdf_paths = find_all_pdfs()
-    with st.sidebar:
-        st.caption(f"PDFs discovered on disk: {len(pdf_paths)}")
-        if len(pdf_paths) > 0:
-            st.caption("Example PDFs:")
-            for p in pdf_paths[:8]:
-                st.write("•", str(p.relative_to(BASE_DIR)))
-
-    if not pdf_paths:
-        st.error("No PDFs found in the deployed filesystem. Put PDFs in the repo (same branch) and redeploy.")
-        st.stop()
-
-    with st.spinner("Uploading ALL PDFs to Gemini (one-time per session)..."):
-        st.session_state.uploaded_pdf_file_names = upload_pdfs_to_gemini(pdf_paths)
-
 if "textbook_cache_name" not in st.session_state:
     st.session_state.textbook_cache_name = ""
 
+# --- Discover PDFs on disk ---
+if "pdf_paths" not in st.session_state:
+    st.session_state.pdf_paths = find_all_pdfs()
+
+with st.sidebar:
+    st.caption(f"BASE_DIR: {BASE_DIR}")
+    st.caption(f"PDFs discovered on disk: {len(st.session_state.pdf_paths)}")
+    for p in st.session_state.pdf_paths[:10]:
+        try:
+            sz = p.stat().st_size
+        except Exception:
+            sz = 0
+        st.write(f"• {p.relative_to(BASE_DIR)} ({mb(sz)} MB)")
+
+if not st.session_state.pdf_paths:
+    st.error("No PDFs found in the deployed filesystem. Ensure PDFs are committed on the same branch Streamlit deploys.")
+    st.stop()
+
+# --- Upload PDFs to Gemini (once per session) ---
+if "uploaded_pdf_file_names" not in st.session_state:
+    with st.spinner("Uploading ALL PDFs to Gemini (one-time per session)..."):
+        uploaded, failures = upload_all_pdfs(st.session_state.pdf_paths)
+
+    st.session_state.uploaded_pdf_file_names = uploaded
+    st.session_state.upload_failures = failures
+
+with st.sidebar:
+    st.caption(f"PDFs uploaded to Gemini: {len(st.session_state.uploaded_pdf_file_names)}")
+    if st.session_state.get("upload_failures"):
+        st.error(f"Upload failures: {len(st.session_state.upload_failures)}")
+        for p, err in st.session_state.upload_failures[:10]:
+            st.write(f"- {p.name}: {type(err).__name__} — {err}")
+
+# --- Build cache (once per session / TTL) ---
 if not st.session_state.textbook_cache_name:
     with st.spinner("Building explicit context cache (one-time per session)..."):
         ensure_textbook_cache(st.session_state.uploaded_pdf_file_names)
@@ -424,7 +486,6 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
         thinking_placeholder = st.empty()
 
         try:
-            # Keep thinking bubble + change text (animation continues in browser)
             with thinking_placeholder:
                 show_thinking_animation("🔍 Helix is checking ALL textbooks 📚")
             time.sleep(THINK_STEP_SECONDS)
@@ -439,47 +500,41 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
 
             with thinking_placeholder:
                 show_thinking_animation("✍️ Helix is forming your answer…")
+            # (Animation stays running while the model call happens.)
 
-            # Rolling context (like Perplexity trimming oldest)
-            maybe_summarize_old_chat(st.session_state.messages, keep_last_msgs=22)
+            maybe_summarize_old_chat(st.session_state.messages, keep_last_msgs=SUMMARY_TRIGGER_MSGS)
             history_contents = build_history_contents(st.session_state.messages, max_turns=MAX_TURNS)
 
-            request_contents = []
+            req_contents = []
             if st.session_state.chat_summary.strip():
-                request_contents.append(
+                req_contents.append(
                     types.Content(
                         role="user",
                         parts=[types.Part.from_text(text="Conversation summary:\n" + st.session_state.chat_summary.strip())],
                     )
                 )
-            request_contents.extend(history_contents)
+            req_contents.extend(history_contents)
 
             cache_name = ensure_textbook_cache(st.session_state.uploaded_pdf_file_names)
 
+            tools = [{"google_search": {}}] if ENABLE_GOOGLE_SEARCH_TOOL else None
+
             text_response = client.models.generate_content(
                 model=MODEL_TEXT,
-                contents=request_contents,
+                contents=req_contents,
                 config=types.GenerateContentConfig(
                     cached_content=cache_name,
-                    tools=[{"google_search": {}}],
+                    tools=tools,
                 ),
             )
 
             bot_text = text_response.text or ""
-
             thinking_placeholder.empty()
+
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # Optional: show cache hit info (if available in your SDK response)
-            try:
-                cc = getattr(text_response.usage_metadata, "cached_content_token_count", None)
-                if cc is not None:
-                    st.sidebar.caption(f"cached_content_token_count: {cc}")
-            except Exception:
-                pass
-
-            # --- IMAGE GENERATION ---
+            # IMAGE GENERATION
             if "IMAGE_GEN:" in bot_text:
                 img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\\n")[0]
 
@@ -498,8 +553,8 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
                         )
                         for part in image_response.parts:
                             if part.inline_data:
-                                img_bytes = part.inline_data.data
                                 img_status.empty()
+                                img_bytes = part.inline_data.data
                                 st.image(img_bytes, caption="Generated by Helix")
                                 st.session_state.messages.append(
                                     {"role": "assistant", "content": img_bytes, "is_image": True}
@@ -514,9 +569,4 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
 
         except Exception as e:
             thinking_placeholder.empty()
-            if "403" in str(e) or "PERMISSION_DENIED" in str(e):
-                st.error("Helix's connection timed out. Please refresh the page!")
-                st.session_state.textbook_cache_name = ""
-            else:
-                st.error(f"Helix encountered a technical glitch: {e}")
-
+            st.error(f"Helix encountered a technical glitch: {type(e).__name__}: {e}")
