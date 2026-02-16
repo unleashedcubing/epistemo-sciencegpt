@@ -113,7 +113,6 @@ ALSO: The textbooks were too big, so I split each into 2. The names would have .
 ALSO: In MCQs, randomize the answers, because in a previous test I did using you, the answers were 1)C, 2)C, 3)C, 4)C. REMEMBER, RANDOMIZE MCQ ANSWERS
 ALSO: Use BOTH WB (Workbook) AND TB (Textbook) because the WB has questions mainly, but SB has theory. Using BOTH WILL GIVE YOU A WIDE RANGE OF QUESTIONS.
 ALSO: DO NOT INTRODUCE YOURSELF LIKE "I am Helix!" as I have already created and introduction message. Just get to the user's query immediately.
-ALSO:
 
 ### RULE 1: SOURCE PRIORITY
 - First, ALWAYS check the content of the uploaded PDF files to answer a question.
@@ -124,117 +123,64 @@ ALSO:
 - I couldn't find the TB/WB source for Stage 9 English, so you will go off of this table of contents:
 Chapter 1 • Writing to explore and reflect
 1.1 What is travel writing?
-
 1.2 Selecting and noting key information in travel texts
-
 1.3 Comparing tone and register in travel texts
-
 1.4 Responding to travel writing
-
 1.5 Understanding grammatical choices in travel writing
-
 1.6 Varying sentences for effect
-
 1.7 Boost your vocabulary
-
 1.8 Creating a travel account
-
 Chapter 2 • Writing to inform and explain
 2.1 Matching informative texts to audience and purpose
-
 2.2 Using formal and informal language in information texts
-
 2.3 Comparing information texts
-
 2.4 Using discussion to prepare for a written assignment
-
 2.5 Planning information texts to suit different audiences
-
 2.6 Shaping paragraphs to suit audience and purpose
-
 2.7 Crafting sentences for a range of effects
-
 2.8 Making explanations precise and concise
-
 2.9 Writing encyclopedia entries
-
 Chapter 3 • Writing to argue and persuade
 3.1 Reviewing persuasive techniques
-
 3.2 Commenting on use of language to persuade
-
 3.3 Exploring layers of persuasive language
-
 3.4 Responding to the use of persuasive language
-
 3.5 Adapting grammar choices to create effects in argument writing
-
 3.6 Organising a whole argument effectively
-
 3.7 Organising an argument within each paragraph
-
 3.8 Presenting and responding to a question
-
 3.9 Producing an argumentative essay
-
 Chapter 4 • Descriptive writing
 4.1 Analysing how atmospheres are created
-
 4.2 Developing analysis of a description
-
 4.3 Analysing atmospheric descriptions
-
 4.4 Using images to inspire description
-
 4.5 Using language to develop an atmosphere
-
 4.6 Sustaining a cohesive atmosphere
-
 4.7 Creating atmosphere through punctuation
-
 4.8 Using structural devices to build up atmosphere
-
 4.9 Producing a powerful description
-
 Chapter 5 • Narrative writing
 5.1 Understanding story openings
-
 5.2 Exploring setting and atmosphere
-
 5.3 Introducing characters in stories
-
 5.4 Responding to powerful narrative
-
 5.5 Pitching a story
-
 5.6 Creating narrative suspense and climax
-
 5.7 Creating character
-
 5.8 Using tenses in narrative
-
 5.9 Using pronouns and sentence order for effect
-
 5.10 Creating a thriller
-
 Chapter 6 • Writing to analyse and compare
 6.1 Analysing implicit meaning in non-fiction texts
-
 6.2 Analysing how a play's key elements create different effects
-
 6.3 Using discussion skills to analyse carefully
-
 6.4 Comparing effectively through punctuation and grammar
-
 6.5 Analysing two texts
-
 Chapter 7 • Testing your skills
 7.1 Reading and writing questions on non-fiction texts
-
 7.2 Reading and writing questions on fiction texts
-
 7.3 Assessing your progress: non-fiction reading and writing
-
 7.4 Assessing your progress: fiction reading and writing
 
 ### RULE 3: IMAGE GENERATION (STRICT)
@@ -243,8 +189,8 @@ Chapter 7 • Testing your skills
 
 ### RULE 4: QUESTION PAPERS
 - When asked to create a question paper, quiz, or test, strictly follow this structure:
-  - Science (Checkpoint style): produce Paper 1 and/or Paper 2 (default both) as a 50‑mark, ~45‑minute structured written paper with numbered questions showing marks like “(3)”, mixing knowledge/application plus data handling (tables/graphs) and at least one investigation/practical-skills question (variables, fair test, reliability, improvements) and at least one diagram task; then include a point-based mark scheme with working/units for calculations. 
-  - Mathematics (Checkpoint style): produce Paper 1 non‑calculator and Paper 2 calculator (default both), each ~45 minutes and 50 marks, mostly structured questions with marks shown, covering arithmetic/fractions/percent, algebra, geometry, and data/statistics, including at least one multi-step word problem and requiring “show working”; then give an answer key with method marks for 2+ mark items. 
+  - Science (Checkpoint style): produce Paper 1 and/or Paper 2 (default both) as a 50‑mark, ~45‑minute structured written paper with numbered questions showing marks like “(3)”, mixing knowledge/application plus data handling (tables/graphs) and at least one investigation/practical-skills question (variables, fair test, reliability, improvements) and at least one diagram task; then include a point-based mark scheme with working/units for calculations.
+  - Mathematics (Checkpoint style): produce Paper 1 non‑calculator and Paper 2 calculator (default both), each ~45 minutes and 50 marks, mostly structured questions with marks shown, covering arithmetic/fractions/percent, algebra, geometry, and data/statistics, including at least one multi-step word problem and requiring “show working”; then give an answer key with method marks for 2+ mark items.
   - English (Checkpoint style): produce Paper 1 Non‑fiction and Paper 2 Fiction (default both), each ~45 minutes and 50 marks, using original passages you write (no copyrighted extracts), with structured comprehension (literal + inference + writer’s effect) and one longer directed/creative writing task per paper; then include a mark scheme (acceptable reading points per mark) plus a simple writing rubric (content/organisation/style & accuracy) and a brief high-scoring outline.
 
 ### RULE 5: ARMAAN STYLE
@@ -253,25 +199,29 @@ If a user asks you to reply in Armaan Style, you have to explain in expert physi
 
 # --- TEXTBOOK UPLOADER (No Cache, Direct Upload) ---
 def upload_textbooks():
-    pdf_filenames = ["CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf", "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf", "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf", "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf", "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"]
+    pdf_filenames = [
+        "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
+        "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
+        "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
+        "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
+        "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
+    ]
     active_files = []
     for fn in pdf_filenames:
         if os.path.exists(fn):
             try:
-                # Fresh upload for the session to ensure active permission handles
                 uploaded_file = client.files.upload(file=fn)
                 active_files.append(uploaded_file)
-                
-                # Wait for ACTIVE state (crucial for Gemini to read them)
+
                 while uploaded_file.state.name == "PROCESSING":
                     time.sleep(1)
                     uploaded_file = client.files.get(name=uploaded_file.name)
-                    
+
             except Exception as e:
                 st.sidebar.error(f"Error loading {fn}: {e}")
     return active_files
 
-# --- THINKING ANIMATION ---
+# --- THINKING ANIMATION (for image generation status) ---
 def show_thinking_animation(message="Helix is thinking"):
     thinking_html = f"""
     <div class="thinking-container">
@@ -285,11 +235,66 @@ def show_thinking_animation(message="Helix is thinking"):
     """
     return st.markdown(thinking_html, unsafe_allow_html=True)
 
+# --- MEMORY: rolling window + optional summary ---
+def build_model_history(messages, max_turns=7):
+    """
+    Convert Streamlit chat history -> Gemini list[types.Content] with roles.
+    Keeps only the last max_turns user+assistant turns (up to 2*max_turns messages).
+    """
+    text_msgs = []
+    for m in messages:
+        if m.get("is_image"):
+            continue
+        if m.get("role") in ("user", "assistant"):
+            text_msgs.append(m)
+
+    window = text_msgs[-(2 * max_turns):]
+
+    contents = []
+    for m in window:
+        role = "user" if m["role"] == "user" else "model"
+        # Using Part.from_text is the canonical SDK way
+        contents.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
+    return contents
+
+
+def maybe_summarize_old_chat(client, messages, keep_last_msgs=22):
+    """
+    If chat is long, create/refresh a short summary stored in st.session_state.chat_summary.
+    """
+    if len(messages) <= keep_last_msgs:
+        return
+
+    old = [m for m in messages[:-keep_last_msgs] if not m.get("is_image") and m.get("role") in ("user", "assistant")]
+    if not old:
+        return
+
+    old_text = "\n".join([f'{m["role"].upper()}: {m["content"]}' for m in old])
+    old_text = old_text[-12000:]  # safety cap
+
+    summary_prompt = (
+        "Summarize the conversation so far in <= 10 bullet points.\n"
+        "Keep: user's grade/stage, subject(s), chapter(s), what was asked, and any constraints.\n"
+        "Do NOT add new facts.\n\n"
+        f"Conversation:\n{old_text}"
+    )
+
+    resp = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[summary_prompt],
+        config=types.GenerateContentConfig(system_instruction="You are a precise summarizer.")
+    )
+
+    st.session_state.chat_summary = (resp.text or "").strip()
+
 # --- INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
     ]
+
+if "chat_summary" not in st.session_state:
+    st.session_state.chat_summary = ""
 
 if "textbook_handles" not in st.session_state:
     with st.spinner("Helix is reading the Cambridge Workbooks..."):
@@ -305,76 +310,94 @@ for message in st.session_state.messages:
 
 # --- MAIN CHAT LOOP ---
 if prompt := st.chat_input("Ask Helix a question from your books, create diagrams, quizes and more..."):
-    # 1. Show User Message
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        # Show thinking animation
-        thinking_placeholder = st.empty()
-        with thinking_placeholder:
-            show_thinking_animation("🔍 Helix is searching the textbooks 📚")
-        
-        try:
-            # 2. TEXT RESPONSE (Gemini 2.5 Flash - Direct File Access)
-            # We send the file handles + prompt directly. 2.5 Flash handles this.
-            text_response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=st.session_state.textbook_handles + [prompt],
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    tools=[{"google_search": {}}]
+        # Status box with changing labels (no threading)
+        with st.status("🔍 Helix is checking your textbooks 📚", expanded=False) as status:
+            try:
+                time.sleep(5)
+                status.update(label="🧾 Helix is confirming sources…", state="running", expanded=False)
+                time.sleep(5)
+                status.update(label="🧠 Helix is connecting ideas…", state="running", expanded=False)
+                time.sleep(5)
+                status.update(label="✍️ Helix is forming your answer…", state="running", expanded=False)
+
+                # Build rolling context (Perplexity-like trimming)
+                maybe_summarize_old_chat(client, st.session_state.messages, keep_last_msgs=22)
+                history_contents = build_model_history(st.session_state.messages, max_turns=7)
+
+                summary_note = ""
+                if st.session_state.chat_summary.strip():
+                    summary_note = "Conversation summary (for context):\n" + st.session_state.chat_summary.strip()
+
+                contents_for_model = []
+                contents_for_model.extend(st.session_state.textbook_handles)
+                if summary_note:
+                    contents_for_model.append(summary_note)
+                contents_for_model.extend(history_contents)
+
+                text_response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=contents_for_model,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_INSTRUCTION,
+                        tools=[{"google_search": {}}]
+                    )
                 )
-            )
-            
-            bot_text = text_response.text
-            
-            # Clear thinking animation and show response
-            thinking_placeholder.empty()
-            st.markdown(bot_text)
-            st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # 3. IMAGE GENERATION (Gemini 3 Pro Multimodal)
-            if "IMAGE_GEN:" in bot_text:
-                img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\\n")[0]
-                
-                img_thinking_placeholder = st.empty()
-                with img_thinking_placeholder:
-                    show_thinking_animation("🖌️ Helix is painting a diagram 🎨")
-                
-                for attempt in range(2):
-                    try:
-                        image_response = client.models.generate_content(
-                            model="gemini-3-pro-image-preview",
-                            contents=[img_desc],
-                            config=types.GenerateContentConfig(
-                                response_modalities=['TEXT', 'IMAGE']
+                status.update(label="✅ Helix is double-checking for mistakes…", state="running", expanded=False)
+
+                bot_text = text_response.text or ""
+                status.update(label="Done.", state="complete", expanded=False)
+
+                st.markdown(bot_text)
+                st.session_state.messages.append({"role": "assistant", "content": bot_text})
+
+                # --- IMAGE GENERATION ---
+                if "IMAGE_GEN:" in bot_text:
+                    img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\\n")[0]
+
+                    img_status = st.empty()
+                    with img_status:
+                        show_thinking_animation("🖌️ Helix is painting a diagram 🎨")
+
+                    for attempt in range(2):
+                        try:
+                            image_response = client.models.generate_content(
+                                model="gemini-3-pro-image-preview",
+                                contents=[img_desc],
+                                config=types.GenerateContentConfig(
+                                    response_modalities=['TEXT', 'IMAGE']
+                                )
                             )
-                        )
-                        
-                        for part in image_response.parts:
-                            if part.inline_data:
-                                img_bytes = part.inline_data.data
-                                img_thinking_placeholder.empty()
-                                st.image(img_bytes, caption="Generated by Helix")
-                                st.session_state.messages.append({
-                                    "role": "assistant", 
-                                    "content": img_bytes, 
-                                    "is_image": True
-                                })
-                        break
-                    except Exception as inner_e:
-                        if "503" in str(inner_e) and attempt == 0:
-                            time.sleep(2)
-                            continue
-                        else:
-                            img_thinking_placeholder.empty()
-                            st.error(f"Image generation failed: {inner_e}")
 
-        except Exception as e:
-            thinking_placeholder.empty()
-            if "403" in str(e) or "PERMISSION_DENIED" in str(e):
-                st.error("Helix's connection to the workbooks timed out. Please refresh the page!")
-                del st.session_state.textbook_handles
-            else:
-                st.error(f"Helix encountered a technical glitch: {e}")
+                            for part in image_response.parts:
+                                if part.inline_data:
+                                    img_bytes = part.inline_data.data
+                                    img_status.empty()
+                                    st.image(img_bytes, caption="Generated by Helix")
+                                    st.session_state.messages.append({
+                                        "role": "assistant",
+                                        "content": img_bytes,
+                                        "is_image": True
+                                    })
+                            break
+                        except Exception as inner_e:
+                            if "503" in str(inner_e) and attempt == 0:
+                                time.sleep(2)
+                                continue
+                            else:
+                                img_status.empty()
+                                st.error(f"Image generation failed: {inner_e}")
+
+            except Exception as e:
+                status.update(label="❌ Something went wrong.", state="error", expanded=False)
+
+                if "403" in str(e) or "PERMISSION_DENIED" in str(e):
+                    st.error("Helix's connection to the workbooks timed out. Please refresh the page!")
+                    if "textbook_handles" in st.session_state:
+                        del st.session_state.textbook_handles
+                else:
+                    st.error(f"Helix encountered a technical glitch: {e}")
