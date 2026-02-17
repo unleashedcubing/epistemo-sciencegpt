@@ -4,6 +4,7 @@ import time
 import io
 from google import genai
 from google.genai import types
+import random
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
@@ -189,9 +190,9 @@ Chapter 7 • Testing your skills
 
 ### RULE 4: QUESTION PAPERS
 - When asked to create a question paper, quiz, or test, strictly follow this structure:
-  - Science (Checkpoint style): produce Paper 1 and/or Paper 2 (default both) as a 50‑mark, ~45‑minute structured written paper with numbered questions showing marks like “(3)”, mixing knowledge/application plus data handling (tables/graphs) and at least one investigation/practical-skills question (variables, fair test, reliability, improvements) and at least one diagram task; then include a point-based mark scheme with working/units for calculations.
-  - Mathematics (Checkpoint style): produce Paper 1 non‑calculator and Paper 2 calculator (default both), each ~45 minutes and 50 marks, mostly structured questions with marks shown, covering arithmetic/fractions/percent, algebra, geometry, and data/statistics, including at least one multi-step word problem and requiring “show working”; then give an answer key with method marks for 2+ mark items.
-  - English (Checkpoint style): produce Paper 1 Non‑fiction and Paper 2 Fiction (default both), each ~45 minutes and 50 marks, using original passages you write (no copyrighted extracts), with structured comprehension (literal + inference + writer’s effect) and one longer directed/creative writing task per paper; then include a mark scheme (acceptable reading points per mark) plus a simple writing rubric (content/organisation/style & accuracy) and a brief high-scoring outline.
+  - Science (Checkpoint style): produce Paper 1 and/or Paper 2 (default both) as a 50‑mark, ~45‑minute structured written paper with numbered questions showing marks like "(3)", mixing knowledge/application plus data handling (tables/graphs) and at least one investigation/practical-skills question (variables, fair test, reliability, improvements) and at least one diagram task; then include a point-based mark scheme with working/units for calculations.
+  - Mathematics (Checkpoint style): produce Paper 1 non‑calculator and Paper 2 calculator (default both), each ~45 minutes and 50 marks, mostly structured questions with marks shown, covering arithmetic/fractions/percent, algebra, geometry, and data/statistics, including at least one multi-step word problem and requiring "show working"; then give an answer key with method marks for 2+ mark items.
+  - English (Checkpoint style): produce Paper 1 Non‑fiction and Paper 2 Fiction (default both), each ~45 minutes and 50 marks, using original passages you write (no copyrighted extracts), with structured comprehension (literal + inference + writer's effect) and one longer directed/creative writing task per paper; then include a mark scheme (acceptable reading points per mark) plus a simple writing rubric (content/organisation/style & accuracy) and a brief high-scoring outline.
 
 ### RULE 5: ARMAAN STYLE
 If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist/mathematician/writer terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
@@ -222,7 +223,31 @@ def upload_textbooks():
                 st.sidebar.error(f"Error loading {fn}: {e}")
     return active_files
 
-# --- THINKING ANIMATION ---
+# --- THINKING ANIMATION WITH ROTATION ---
+def show_thinking_animation_rotating(placeholder):
+    thinking_messages = [
+        "🔍 Helix is searching the textbooks 📚",
+        "🧠 Helix is analyzing your question 💭",
+        "✨ Helix is forming your answer 📝",
+        "🔬 Helix is processing information 🧪",
+        "📖 Helix is consulting the resources 📊"
+    ]
+    
+    for message in thinking_messages:
+        thinking_html = f"""
+        <div class="thinking-container">
+            <span class="thinking-text">{message}</span>
+            <div class="thinking-dots">
+                <div class="thinking-dot"></div>
+                <div class="thinking-dot"></div>
+                <div class="thinking-dot"></div>
+            </div>
+        </div>
+        """
+        placeholder.markdown(thinking_html, unsafe_allow_html=True)
+        time.sleep(3)
+
+# --- SINGLE THINKING ANIMATION ---
 def show_thinking_animation(message="Helix is thinking"):
     thinking_html = f"""
     <div class="thinking-container">
@@ -261,10 +286,9 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        # Show thinking animation
+        # Show rotating thinking animation
         thinking_placeholder = st.empty()
-        with thinking_placeholder:
-            show_thinking_animation("🔍 Helix is searching the textbooks 📚")
+        show_thinking_animation_rotating(thinking_placeholder)
         
         try:
             # 2. TEXT RESPONSE (Gemini 2.5 Flash - Direct File Access)
@@ -287,7 +311,7 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
 
             # 3. IMAGE GENERATION (Gemini 3 Pro Multimodal)
             if "IMAGE_GEN:" in bot_text:
-                img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\\n")[0]
+                img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                 
                 img_thinking_placeholder = st.empty()
                 with img_thinking_placeholder:
