@@ -207,7 +207,7 @@ If a user asks you to reply in Armaan Style, you have to explain in expert physi
 # --- 5. ROBUST FILE UPLOADER & CACHING ---
 def upload_textbooks():
     """
-    Uploads textbooks with robust path checking and state monitoring.
+    Uploads textbooks with explicit directory checking.
     """
     pdf_filenames = [
         "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
@@ -219,21 +219,23 @@ def upload_textbooks():
     
     active_files = []
     
-    # 🔍 DEBUG: Print environment info to Sidebar
+    # 🔍 DEBUG: Ensure we are in the correct directory
     st.sidebar.markdown("### 📂 File System Debug")
-    cwd = os.getcwd()
-    st.sidebar.code(f"Current Dir: {cwd}")
     
+    # Get the directory where THIS script is running
+    script_dir = Path(__file__).parent.absolute()
+    st.sidebar.code(f"Script Dir: {script_dir}")
+    
+    # List PDFs in this directory
     try:
-        all_files = os.listdir(cwd)
-        pdf_files_found = [f for f in all_files if f.lower().endswith('.pdf')]
+        pdf_files_found = list(script_dir.glob("*.pdf"))
         st.sidebar.write(f"📄 PDFs Found: {len(pdf_files_found)}")
         
         if not pdf_files_found:
-            st.sidebar.error("❌ No PDF files found! Check deployment.")
+            st.sidebar.error(f"❌ No PDFs in {script_dir}")
             return []
     except Exception as e:
-        st.sidebar.error(f"Error reading directory: {e}")
+        st.sidebar.error(f"Error checking dir: {e}")
         return []
 
     # Progress bar for uploads
@@ -245,16 +247,16 @@ def upload_textbooks():
         progress = (i + 1) / len(pdf_filenames)
         progress_bar.progress(progress)
         
-        # Robust path handling
-        file_path = Path(cwd) / fn
+        # Explicitly use the script directory
+        file_path = script_dir / fn
         
         if file_path.exists():
             try:
-                # 1. Check if file is small enough to be worth checking (optional)
+                # 1. Check file size
                 file_size_mb = file_path.stat().st_size / (1024 * 1024)
                 status_text.text(f"⬆️ Uploading: {fn} ({file_size_mb:.1f} MB)...")
                 
-                # 2. UPLOAD FILE - Corrected 'file=' argument
+                # 2. UPLOAD FILE - Using 'file=' argument
                 uploaded_file = client.files.upload(
                     file=file_path,
                     config={'mime_type': 'application/pdf'}
@@ -419,3 +421,4 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
             st.error(f"Helix encountered an error: {e}")
             if "403" in str(e) or "PERMISSION_DENIED" in str(e):
                 st.warning("⚠️ Textbook session expired. Please refresh the page to reload books.")
+
