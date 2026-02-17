@@ -254,10 +254,9 @@ def upload_textbooks():
                 file_size_mb = file_path.stat().st_size / (1024 * 1024)
                 status_text.text(f"⬆️ Uploading: {fn} ({file_size_mb:.1f} MB)...")
                 
-                # 2. UPLOAD FILE
-                # Uses path=str(file_path) for correct OS handling
+                # 2. UPLOAD FILE - Corrected 'file=' argument
                 uploaded_file = client.files.upload(
-                    path=str(file_path),
+                    file=file_path,
                     config={'mime_type': 'application/pdf'}
                 )
                 
