@@ -1,62 +1,53 @@
 import streamlit as st
-import os
 import time
 from pathlib import Path
 from google import genai
 from google.genai import types
 
-# ---------------------------
-# PAGE CONFIG
-# ---------------------------
+# =========================
+# CONFIG
+# =========================
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 
-# ---------------------------
-# THEME CSS
-# ---------------------------
+MODEL_TEXT = "gemini-2.5-flash"
+MODEL_IMAGE = "gemini-3-pro-image-preview"
+
+MAX_TURNS = 7
+SUMMARY_TRIGGER_MSGS = 22
+THINK_STEP_SECONDS = 2
+
+# Upload retry/backoff (helps Streamlit Cloud)
+UPLOAD_RETRIES = 4
+UPLOAD_BASE_SLEEP = 1.5
+UPLOAD_BETWEEN_FILES = 0.3
+
+# Cache TTL on Google side (CachedContent)
+CACHE_TTL = "21600s"  # 6 hours
+CACHE_CHUNK_PARTS = 20  # parts per Content chunk
+
+# Put your full system instruction here
+SYSTEM_INSTRUCTION = """PASTE YOUR FULL SYSTEM INSTRUCTION HERE"""
+
+# =========================
+# UI (optional styling)
+# =========================
 st.markdown("""
 <style>
-.stApp {
-  background:
-    radial-gradient(800px circle at 50% 0%,
-      rgba(0, 212, 255, 0.08),
-      rgba(0, 212, 255, 0.00) 60%),
-    var(--background-color);
-  color: var(--text-color);
-}
 .big-title {
   font-family: 'Inter', sans-serif;
   color: #00d4ff;
   text-align: center;
-  font-size: 48px;
-  font-weight: 1200;
-  letter-spacing: -3px;
+  font-size: 44px;
+  font-weight: 900;
+  letter-spacing: -2px;
   margin-bottom: 0px;
-  text-shadow:
-    0 0 6px rgba(0, 212, 255, 0.55),
-    0 0 18px rgba(0, 212, 255, 0.35),
-    0 0 42px rgba(0, 212, 255, 0.20);
-  animation: helix-glow 2.2s ease-in-out infinite;
-}
-@keyframes helix-glow {
-  0%, 100% {
-    text-shadow:
-      0 0 6px rgba(0, 212, 255, 0.45),
-      0 0 18px rgba(0, 212, 255, 0.28),
-      0 0 42px rgba(0, 212, 255, 0.16);
-  }
-  50% {
-    text-shadow:
-      0 0 8px rgba(0, 212, 255, 0.75),
-      0 0 24px rgba(0, 212, 255, 0.45),
-      0 0 54px rgba(0, 212, 255, 0.24);
-  }
 }
 .subtitle {
   text-align: center;
   color: var(--text-color);
-  opacity: 0.60;
-  font-size: 18px;
-  margin-bottom: 30px;
+  opacity: 0.65;
+  font-size: 16px;
+  margin-bottom: 18px;
 }
 .thinking-container {
   display: flex;
@@ -68,14 +59,13 @@ st.markdown("""
   margin: 10px 0;
   border-left: 3px solid #fc8404;
 }
-.thinking-text { color: #fc8404; font-size: 14px; font-weight: 600; }
+.thinking-text { color: #fc8404; font-size: 14px; font-weight: 700; }
 .thinking-dots { display: flex; gap: 4px; }
 .thinking-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background-color: #fc8404;
   animation: thinking-pulse 1.4s ease-in-out infinite;
 }
-.thinking-dot:nth-child(1){ animation-delay: 0s; }
 .thinking-dot:nth-child(2){ animation-delay: 0.2s; }
 .thinking-dot:nth-child(3){ animation-delay: 0.4s; }
 @keyframes thinking-pulse {
@@ -88,64 +78,46 @@ st.markdown("""
 <div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
 """, unsafe_allow_html=True)
 
-# ---------------------------
-# API SETUP
-# ---------------------------
-if "GOOGLE_API_KEY" in st.secrets:
-    api_key = st.secrets["GOOGLE_API_KEY"]
-else:
-    st.error("Error: GOOGLE_API_KEY not found in Streamlit Secrets.")
+def thinking(message: str):
+    html = f"""
+    <div class="thinking-container">
+      <span class="thinking-text">{message}</span>
+      <div class="thinking-dots">
+        <div class="thinking-dot"></div>
+        <div class="thinking-dot"></div>
+        <div class="thinking-dot"></div>
+      </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+# =========================
+# API
+# =========================
+api_key = (st.secrets.get("GOOGLE_API_KEY", "") or "").strip()
+if not api_key:
+    st.error("Missing GOOGLE_API_KEY in Streamlit Secrets.")
     st.stop()
 
 client = genai.Client(api_key=api_key)
 
-MODEL_TEXT = "gemini-2.5-flash"
-MODEL_IMAGE = "gemini-3-pro-image-preview"
+# =========================
+# Helpers: secrets parsing
+# =========================
+def get_secret_str(key: str) -> str:
+    return (st.secrets.get(key, "") or "").strip()
 
-# ---------------------------
-# SETTINGS
-# ---------------------------
-MAX_TURNS = 7
-SUMMARY_TRIGGER_MSGS = 22
-THINK_STEP_SECONDS = 3
+def parse_csv_secret(key: str) -> list[str]:
+    raw = get_secret_str(key)
+    if not raw:
+        return []
+    return [x.strip() for x in raw.split(",") if x.strip()]
 
-ENABLE_GOOGLE_SEARCH_TOOL = True
-
-UPLOAD_RETRIES = 4
-UPLOAD_BASE_SLEEP = 1.5
-UPLOAD_BETWEEN_FILES = 0.4
-
-CACHE_TTL = "3600s"
-CACHE_CHUNK_PARTS = 20  # PDFs per Content chunk in cache creation
-
-# ---------------------------
-# SYSTEM INSTRUCTION
-# ---------------------------
-SYSTEM_INSTRUCTION = """
-PASTE YOUR FULL SYSTEM INSTRUCTION HERE (exactly as you wrote it)
-"""
-
-# ---------------------------
-# UI helper
-# ---------------------------
-def show_thinking_animation(message="Helix is thinking"):
-    thinking_html = f"""
-    <div class="thinking-container">
-        <span class="thinking-text">{message}</span>
-        <div class="thinking-dots">
-            <div class="thinking-dot"></div>
-            <div class="thinking-dot"></div>
-            <div class="thinking-dot"></div>
-        </div>
-    </div>
-    """
-    return st.markdown(thinking_html, unsafe_allow_html=True)
-
-# ---------------------------
-# Chat memory
-# ---------------------------
+# =========================
+# Helpers: chat memory
+# =========================
 def build_history_contents(messages, max_turns=MAX_TURNS):
-    text_msgs = [m for m in messages if (not m.get("is_image")) and m.get("role") in ("user", "assistant")]
+    text_msgs = [m for m in messages if m.get("role") in ("user", "assistant") and not m.get("is_image")]
     window = text_msgs[-(2 * max_turns):]
     contents = []
     for m in window:
@@ -156,9 +128,11 @@ def build_history_contents(messages, max_turns=MAX_TURNS):
 def maybe_summarize_old_chat(messages, keep_last_msgs=SUMMARY_TRIGGER_MSGS):
     if len(messages) <= keep_last_msgs:
         return
-    old = [m for m in messages[:-keep_last_msgs] if (not m.get("is_image")) and m.get("role") in ("user", "assistant")]
+
+    old = [m for m in messages[:-keep_last_msgs] if m.get("role") in ("user", "assistant") and not m.get("is_image")]
     if not old:
         return
+
     old_text = "\n".join([f'{m["role"].upper()}: {m["content"]}' for m in old])[-12000:]
     prompt = (
         "Summarize the conversation so far in <= 10 bullet points.\n"
@@ -173,29 +147,23 @@ def maybe_summarize_old_chat(messages, keep_last_msgs=SUMMARY_TRIGGER_MSGS):
     )
     st.session_state.chat_summary = (resp.text or "").strip()
 
-# ---------------------------
-# PDF discovery (AUTO)
-# ---------------------------
+# =========================
+# Helpers: PDF discovery
+# =========================
 BASE_DIR = Path(__file__).resolve().parent
 
-def _skip_path(p: Path) -> bool:
-    s = str(p)
-    bad = ("/.git/", "/__pycache__/", "/.venv/", "/venv/", "/site-packages/")
-    return any(x in s for x in bad)
-
-def find_all_pdfs():
+def find_repo_pdfs() -> list[Path]:
+    bad_fragments = ("/.git/", "/__pycache__/", "/.venv/", "/venv/", "/site-packages/")
     pdfs = []
     for p in BASE_DIR.rglob("*.pdf"):
-        if p.is_file() and (not _skip_path(p)):
+        s = str(p)
+        if p.is_file() and not any(b in s for b in bad_fragments):
             pdfs.append(p)
     return sorted(pdfs)
 
-def mb(nbytes):
-    return round(nbytes / (1024 * 1024), 2)
-
-# ---------------------------
-# Upload PDFs to Gemini with retries/backoff
-# ---------------------------
+# =========================
+# Helpers: Gemini Files upload (Google-side)
+# =========================
 def upload_one_pdf(path: Path):
     last_err = None
     for attempt in range(UPLOAD_RETRIES):
@@ -203,201 +171,200 @@ def upload_one_pdf(path: Path):
             if attempt > 0:
                 time.sleep(UPLOAD_BASE_SLEEP * (2 ** (attempt - 1)))
 
-            f = client.files.upload(
-                file=str(path),
-                config=dict(mime_type="application/pdf"),
-            )
+            f = client.files.upload(file=str(path), config={"mime_type": "application/pdf"})
             while f.state.name == "PROCESSING":
                 time.sleep(1)
                 f = client.files.get(name=f.name)
-
-            return f.name, None
+            return f, None
         except Exception as e:
             last_err = e
     return None, last_err
 
-def upload_all_pdfs(pdf_paths):
-    uploaded_names = []
+def upload_all_pdfs(pdf_paths: list[Path]):
+    uploaded = []
     failures = []
-    for p in pdf_paths:
-        name, err = upload_one_pdf(p)
-        if name:
-            uploaded_names.append(name)
-        else:
-            failures.append((p, err))
-        time.sleep(UPLOAD_BETWEEN_FILES)
-    return uploaded_names, failures
+    prog = st.sidebar.progress(0)
+    total = max(1, len(pdf_paths))
 
-def get_uploaded_files(file_names):
-    out = []
+    for i, p in enumerate(pdf_paths, start=1):
+        f, err = upload_one_pdf(p)
+        if f:
+            uploaded.append(f)
+        else:
+            failures.append((p.name, f"{type(err).__name__}: {err}"))
+        prog.progress(i / total)
+        time.sleep(UPLOAD_BETWEEN_FILES)
+
+    return uploaded, failures
+
+def files_from_secret_names(file_names: list[str]):
+    files = []
+    errors = []
     for n in file_names:
         try:
-            out.append(client.files.get(name=n))
-        except Exception:
-            pass
-    return out
+            files.append(client.files.get(name=n))
+        except Exception as e:
+            errors.append((n, f"{type(e).__name__}: {e}"))
+    return files, errors
 
+# =========================
+# Helpers: CachedContent (Google-side)
+# =========================
 def chunk_list(xs, n):
     for i in range(0, len(xs), n):
         yield xs[i:i+n]
 
-# ---------------------------
-# Explicit cache (ALL PDFs)
-# ---------------------------
-def ensure_textbook_cache(uploaded_pdf_file_names):
-    if not uploaded_pdf_file_names:
-        st.error("0 PDFs uploaded to Gemini, so the cache cannot be created. See sidebar for upload failures.")
-        st.stop()
-
-    # Reuse cache if it still exists
-    cache_name = st.session_state.get("textbook_cache_name", "")
-    if cache_name:
-        try:
-            cache_obj = client.caches.get(name=cache_name)
-            with st.sidebar:
-                st.write("CACHE (reused):", cache_obj.name)
-                st.write("CACHE usage_metadata:", getattr(cache_obj, "usage_metadata", None))
-            return cache_obj.name
-        except Exception:
-            st.session_state.textbook_cache_name = ""
-
-    uploaded_files = get_uploaded_files(uploaded_pdf_file_names)
-    if not uploaded_files:
-        st.error("Could not re-fetch uploaded file handles via client.files.get(). Force re-upload from sidebar.")
-        st.stop()
-
+def create_cache_from_files(uploaded_files):
+    # Build cache contents from file URIs
     parts = [types.Part.from_uri(file_uri=f.uri, mime_type="application/pdf") for f in uploaded_files]
     contents = [types.Content(role="user", parts=chunk) for chunk in chunk_list(parts, CACHE_CHUNK_PARTS)]
 
     cache = client.caches.create(
         model=MODEL_TEXT,
         config=types.CreateCachedContentConfig(
-            contents=contents,
-            system_instruction=SYSTEM_INSTRUCTION,
             display_name="helix-all-pdfs",
+            system_instruction=SYSTEM_INSTRUCTION,
+            contents=contents,
             ttl=CACHE_TTL,
         ),
     )
-    st.session_state.textbook_cache_name = cache.name
+    return cache
+
+def get_or_create_cache(uploaded_files):
+    secret_cache_name = get_secret_str("GEMINI_CACHE_NAME")
+    if secret_cache_name:
+        try:
+            cache_obj = client.caches.get(name=secret_cache_name)
+            return cache_obj.name, "reused"
+        except Exception:
+            pass
+
+    cache = create_cache_from_files(uploaded_files)
+    return cache.name, "created"
+
+# =========================
+# Sidebar: Admin workflow
+# =========================
+with st.sidebar:
+    st.subheader("Setup")
+    admin_mode = st.checkbox("Admin mode (upload PDFs + create cache)", value=False)
+    st.caption("If secrets already exist, keep Admin mode OFF for fast start.")
+
+    st.write("Secrets present?")
+    st.write("GEMINI_PDF_FILE_NAMES:", "YES" if bool(get_secret_str("GEMINI_PDF_FILE_NAMES")) else "NO")
+    st.write("GEMINI_CACHE_NAME:", "YES" if bool(get_secret_str("GEMINI_CACHE_NAME")) else "NO")
+
+# =========================
+# Load or build Google assets
+# =========================
+def ensure_google_ready():
+    # Try to reuse Google IDs from secrets (fast path)
+    secret_file_names = parse_csv_secret("GEMINI_PDF_FILE_NAMES")
+    if secret_file_names:
+        files, errs = files_from_secret_names(secret_file_names)
+        with st.sidebar:
+            st.write("Google files loaded:", len(files))
+            if errs:
+                st.warning("Some Google file IDs failed (expired/invalid).")
+                for n, e in errs[:6]:
+                    st.write("-", n, "=>", e)
+
+        if files:
+            cache_name, mode = get_or_create_cache(files)
+            with st.sidebar:
+                st.write("Cache:", cache_name, f"({mode})")
+            st.session_state.google_files = files
+            st.session_state.google_cache_name = cache_name
+            return True
+
+    # No valid secrets => require admin once
+    if not admin_mode:
+        st.warning("Missing/expired Google file IDs. Turn ON Admin mode once, upload, then paste printed secrets.")
+        return False
+
+    pdf_paths = find_repo_pdfs()
+    with st.sidebar:
+        st.write("Repo PDFs found:", len(pdf_paths))
+        for p in pdf_paths[:8]:
+            st.write("•", str(p.relative_to(BASE_DIR)))
+
+    if not pdf_paths:
+        st.error("No PDFs found in the deployed filesystem.")
+        return False
+
+    run = st.sidebar.button("ADMIN: Upload PDFs + Create Cache now")
+    if not run:
+        return False
+
+    with st.spinner("Uploading PDFs to Gemini Files API (Google-side)..."):
+        uploaded_files, failures = upload_all_pdfs(pdf_paths)
 
     with st.sidebar:
-        st.write("CACHE (created):", cache.name)
-        st.write("CACHE usage_metadata:", getattr(cache, "usage_metadata", None))
+        st.write("Uploaded OK:", len(uploaded_files))
+        if failures:
+            st.error(f"Upload failures: {len(failures)}")
+            for name, err in failures[:10]:
+                st.write("-", name, "=>", err)
 
-    return cache.name
+    if not uploaded_files:
+        st.error("0 PDFs uploaded. Fix upload failures above.")
+        return False
 
-# ---------------------------
-# Sidebar controls + debug
-# ---------------------------
-with st.sidebar:
-    st.subheader("Helix Debug")
+    with st.spinner("Creating CachedContent (Google-side cache)..."):
+        cache_name, mode = get_or_create_cache(uploaded_files)
 
-    if st.button("Force re-upload PDFs"):
-        for k in ("uploaded_pdf_file_names", "upload_failures", "textbook_cache_name"):
-            if k in st.session_state:
-                del st.session_state[k]
-        st.rerun()
+    # Print secrets values for you to paste
+    file_names_csv = ",".join([f.name for f in uploaded_files])
+    with st.sidebar:
+        st.success("Copy/paste into Streamlit Secrets:")
+        st.code(f'GEMINI_PDF_FILE_NAMES = "{file_names_csv}"', language="text")
+        st.code(f'GEMINI_CACHE_NAME = "{cache_name}"', language="text")
+        st.caption("Then restart app with Admin mode OFF.")
 
-    if st.button("Force rebuild cache"):
-        st.session_state.textbook_cache_name = ""
-        st.rerun()
+    st.session_state.google_files = uploaded_files
+    st.session_state.google_cache_name = cache_name
+    return True
 
-# ---------------------------
-# INITIALIZE SESSION
-# ---------------------------
+assets_ready = ensure_google_ready()
+
+# =========================
+# Init chat session
+# =========================
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nWhat are we learning today?"}
-    ]
-
+    st.session_state.messages = [{"role": "assistant", "content": "What are we learning today?"}]
 if "chat_summary" not in st.session_state:
     st.session_state.chat_summary = ""
 
-if "textbook_cache_name" not in st.session_state:
-    st.session_state.textbook_cache_name = ""
-
-# ---------------------------
-# Discover PDFs
-# ---------------------------
-if "pdf_paths" not in st.session_state:
-    st.session_state.pdf_paths = find_all_pdfs()
-
-with st.sidebar:
-    st.caption(f"BASE_DIR: {BASE_DIR}")
-    st.caption(f"PDFs discovered on disk: {len(st.session_state.pdf_paths)}")
-    for p in st.session_state.pdf_paths[:10]:
-        try:
-            sz = p.stat().st_size
-        except Exception:
-            sz = 0
-        st.write(f"• {p.relative_to(BASE_DIR)} ({mb(sz)} MB)")
-
-if not st.session_state.pdf_paths:
-    st.error("No PDFs found in the deployed filesystem. Ensure PDFs are committed on the same branch Streamlit deploys.")
-    st.stop()
-
-# ---------------------------
-# Upload PDFs once
-# ---------------------------
-if "uploaded_pdf_file_names" not in st.session_state:
-    with st.spinner("Uploading ALL PDFs to Gemini (one-time per session)..."):
-        uploaded, failures = upload_all_pdfs(st.session_state.pdf_paths)
-
-    st.session_state.uploaded_pdf_file_names = uploaded
-    st.session_state.upload_failures = failures
-
-with st.sidebar:
-    st.caption(f"PDFs uploaded to Gemini: {len(st.session_state.uploaded_pdf_file_names)}")
-    if st.session_state.get("upload_failures"):
-        st.error(f"Upload failures: {len(st.session_state.upload_failures)}")
-        for p, err in st.session_state.upload_failures[:10]:
-            st.write(f"- {p.name}: {type(err).__name__} — {err}")
-
-# ---------------------------
-# Build / reuse cache once
-# ---------------------------
-if not st.session_state.textbook_cache_name:
-    with st.spinner("Building explicit context cache (one-time per session)..."):
-        ensure_textbook_cache(st.session_state.uploaded_pdf_file_names)
-
-# ---------------------------
-# DISPLAY CHAT
-# ---------------------------
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        if message.get("is_image"):
-            st.image(message["content"])
+# Show chat so far
+for m in st.session_state.messages:
+    with st.chat_message(m["role"]):
+        if m.get("is_image"):
+            st.image(m["content"])
         else:
-            st.markdown(message["content"])
+            st.markdown(m["content"])
 
-# ---------------------------
-# MAIN CHAT LOOP
-# ---------------------------
-if prompt := st.chat_input("Ask Helix a question from your books, create diagrams, quizzes and more..."):
+# =========================
+# Chat loop (uses Google cache)
+# =========================
+prompt = st.chat_input("Ask Helix a question...")
+if prompt:
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        thinking_placeholder = st.empty()
-
-        try:
-            with thinking_placeholder:
-                show_thinking_animation("🔍 Helix is checking ALL textbooks 📚")
+        if not assets_ready:
+            st.error("Google cache/files not ready. Turn ON Admin mode once and run the upload+cache step.")
+        else:
+            placeholder = st.empty()
+            with placeholder:
+                thinking("🔍 Helix is checking ALL textbooks 📚")
             time.sleep(THINK_STEP_SECONDS)
 
-            with thinking_placeholder:
-                show_thinking_animation("🧾 Helix is confirming sources…")
-            time.sleep(THINK_STEP_SECONDS)
-
-            with thinking_placeholder:
-                show_thinking_animation("🧠 Helix is connecting ideas…")
-            time.sleep(THINK_STEP_SECONDS)
-
-            with thinking_placeholder:
-                show_thinking_animation("✍️ Helix is forming your answer…")
+            with placeholder:
+                thinking("✍️ Helix is forming your answer…")
 
             maybe_summarize_old_chat(st.session_state.messages, keep_last_msgs=SUMMARY_TRIGGER_MSGS)
-            history_contents = build_history_contents(st.session_state.messages, max_turns=MAX_TURNS)
+            history = build_history_contents(st.session_state.messages, max_turns=MAX_TURNS)
 
             req_contents = []
             if st.session_state.chat_summary.strip():
@@ -407,66 +374,24 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
                         parts=[types.Part.from_text(text="Conversation summary:\n" + st.session_state.chat_summary.strip())],
                     )
                 )
-            req_contents.extend(history_contents)
+            req_contents.extend(history)
 
-            cache_name = ensure_textbook_cache(st.session_state.uploaded_pdf_file_names)
-
-            tools = [{"google_search": {}}] if ENABLE_GOOGLE_SEARCH_TOOL else None
-
-            text_response = client.models.generate_content(
+            resp = client.models.generate_content(
                 model=MODEL_TEXT,
-                contents=req_contents,
+                contents=req_contents,  # IMPORTANT: only prompt/history here, not PDFs
                 config=types.GenerateContentConfig(
-                    cached_content=cache_name,
-                    tools=tools,
+                    cached_content=st.session_state.google_cache_name,
+                    tools=[{"google_search": {}}],
                 ),
             )
 
-            # ---- CACHE HIT DEBUG (THIS is the key place) ----
+            # Debug: see if cache hit tokens show up
             with st.sidebar:
-                um = getattr(text_response, "usage_metadata", None)
+                um = getattr(resp, "usage_metadata", None)
                 st.write("RESPONSE usage_metadata:", um)
                 st.write("cached_content_token_count:", getattr(um, "cached_content_token_count", None))
 
-            bot_text = text_response.text or ""
-            thinking_placeholder.empty()
-
-            st.markdown(bot_text)
-            st.session_state.messages.append({"role": "assistant", "content": bot_text})
-
-            # IMAGE GENERATION
-            if "IMAGE_GEN:" in bot_text:
-                img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\\n")[0]
-
-                img_status = st.empty()
-                with img_status:
-                    show_thinking_animation("🖌️ Helix is painting a diagram 🎨")
-
-                for attempt in range(2):
-                    try:
-                        image_response = client.models.generate_content(
-                            model=MODEL_IMAGE,
-                            contents=[img_desc],
-                            config=types.GenerateContentConfig(
-                                response_modalities=["TEXT", "IMAGE"]
-                            ),
-                        )
-                        for part in image_response.parts:
-                            if part.inline_data:
-                                img_status.empty()
-                                img_bytes = part.inline_data.data
-                                st.image(img_bytes, caption="Generated by Helix")
-                                st.session_state.messages.append(
-                                    {"role": "assistant", "content": img_bytes, "is_image": True}
-                                )
-                        break
-                    except Exception as inner_e:
-                        if "503" in str(inner_e) and attempt == 0:
-                            time.sleep(2)
-                            continue
-                        img_status.empty()
-                        st.error(f"Image generation failed: {inner_e}")
-
-        except Exception as e:
-            thinking_placeholder.empty()
-            st.error(f"Helix encountered a technical glitch: {type(e).__name__}: {e}")
+            answer = resp.text or ""
+            placeholder.empty()
+            st.markdown(answer)
+            st.session_state.messages.append({"role": "assistant", "content": answer})
