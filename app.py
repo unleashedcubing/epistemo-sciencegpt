@@ -1,26 +1,14 @@
 import streamlit as st
 import os
 import time
-import json
 from pathlib import Path
 from google import genai
 from google.genai import types
-from streamlit_cookies_manager import EncryptedCookieManager
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 
-# --- 2. COOKIE MANAGER ---
-# This saves chat history to the browser so it survives refreshes
-cookies = EncryptedCookieManager(
-    prefix="helix_ai_",
-    password=os.environ.get("COOKIE_PASSWORD", "helix-secret-key-2026")
-)
-
-if not cookies.ready():
-    st.stop()
-
-# --- 3. API CLIENT SETUP ---
+# --- 2. API CLIENT SETUP ---
 # Tries to get the key from Environment Variables first, then Streamlit Secrets
 api_key = os.environ.get("GOOGLE_API_KEY")
 if not api_key:
@@ -37,7 +25,7 @@ except Exception as e:
     st.error(f"🚨 Failed to initialize Gemini Client: {e}")
     st.stop()
 
-# --- 4. THEME CSS ---
+# --- 3. THEME CSS ---
 st.markdown("""
 <style>
 /* Theme-aware app background */
@@ -121,7 +109,7 @@ st.markdown("""
 <div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
 """, unsafe_allow_html=True)
 
-# --- 5. SYSTEM INSTRUCTIONS ---
+# --- 4. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
@@ -216,29 +204,10 @@ Chapter 7 • Testing your skills
 If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist/mathematician/writer terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
 """
 
-# --- 6. COOKIE HELPER FUNCTIONS ---
-def save_chat_to_cookies():
-    """Save chat history to browser cookies (excluding images)"""
-    try:
-        text_messages = [msg for msg in st.session_state.messages if not msg.get("is_image")]
-        cookies["chat_history"] = json.dumps(text_messages)
-        cookies.save()
-    except Exception as e:
-        st.sidebar.error(f"Failed to save chat: {e}")
-
-def load_chat_from_cookies():
-    """Load chat history from browser cookies"""
-    try:
-        if "chat_history" in cookies:
-            return json.loads(cookies["chat_history"])
-    except Exception as e:
-        st.sidebar.warning(f"Could not load previous chat: {e}")
-    return None
-
-# --- 7. ROBUST FILE UPLOADER ---
+# --- 5. ROBUST FILE UPLOADER & CACHING ---
 def upload_textbooks():
     """
-    Uploads textbooks with extensive debugging to find path/permission errors.
+    Uploads textbooks with robust path checking and state monitoring.
     """
     pdf_filenames = [
         "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
@@ -255,14 +224,13 @@ def upload_textbooks():
     cwd = os.getcwd()
     st.sidebar.code(f"Current Dir: {cwd}")
     
-    # List all files in current directory to verify presence
     try:
         all_files = os.listdir(cwd)
         pdf_files_found = [f for f in all_files if f.lower().endswith('.pdf')]
-        st.sidebar.write(f"📄 PDFs Found in Dir: {len(pdf_files_found)}")
+        st.sidebar.write(f"📄 PDFs Found: {len(pdf_files_found)}")
         
         if not pdf_files_found:
-            st.sidebar.error("❌ No PDF files found in the current directory! Please check deployment.")
+            st.sidebar.error("❌ No PDF files found! Check deployment.")
             return []
     except Exception as e:
         st.sidebar.error(f"Error reading directory: {e}")
@@ -282,17 +250,18 @@ def upload_textbooks():
         
         if file_path.exists():
             try:
+                # 1. Check if file is small enough to be worth checking (optional)
                 file_size_mb = file_path.stat().st_size / (1024 * 1024)
                 status_text.text(f"⬆️ Uploading: {fn} ({file_size_mb:.1f} MB)...")
                 
-                # UPLOAD FILE using path=
-                # explicitly set mime_type if needed
+                # 2. UPLOAD FILE
+                # Uses path=str(file_path) for correct OS handling
                 uploaded_file = client.files.upload(
                     path=str(file_path),
                     config={'mime_type': 'application/pdf'}
                 )
                 
-                # Wait for processing (Timeout after 30s)
+                # 3. Wait for processing (Timeout after 30s)
                 start_time = time.time()
                 while uploaded_file.state.name == "PROCESSING":
                     if time.time() - start_time > 30:
@@ -301,17 +270,15 @@ def upload_textbooks():
                     time.sleep(1)
                     uploaded_file = client.files.get(name=uploaded_file.name)
                 
-                # Check final state
+                # 4. Check final state
                 if uploaded_file.state.name == "ACTIVE":
                     active_files.append(uploaded_file)
-                    # print(f"✅ Successfully loaded: {fn}")
                 else:
                     st.sidebar.error(f"❌ Failed: {fn} (State: {uploaded_file.state.name})")
                     
             except Exception as e:
                 st.sidebar.error(f"🚨 Error with {fn}: {str(e)}")
         else:
-            # Only warn if it was expected but missing
             if fn in pdf_filenames:
                 st.sidebar.warning(f"⚠️ File missing: {fn}")
     
@@ -319,13 +286,13 @@ def upload_textbooks():
     progress_bar.empty()
     
     if active_files:
-        st.sidebar.success(f"📚 {len(active_files)} Textbooks Ready!")
+        st.sidebar.success(f"📚 {len(active_files)} Textbooks Active!")
     else:
-        st.sidebar.error("❌ No textbooks could be loaded.")
+        st.sidebar.error("❌ No textbooks active.")
         
     return active_files
 
-# --- 8. ANIMATION FUNCTIONS ---
+# --- 6. ANIMATION FUNCTIONS ---
 def show_thinking_animation_rotating(placeholder):
     thinking_messages = [
         "🔍 Helix is searching the textbooks 📚",
@@ -362,37 +329,18 @@ def show_thinking_animation(message="Helix is thinking"):
     """
     return st.markdown(thinking_html, unsafe_allow_html=True)
 
-# --- 9. INITIALIZE SESSION STATE ---
+# --- 7. INITIALIZE SESSION STATE ---
 if "messages" not in st.session_state:
-    # Try to load from cookies first
-    loaded_messages = load_chat_from_cookies()
-    if loaded_messages:
-        st.session_state.messages = loaded_messages
-        st.sidebar.success("✅ Previous chat restored!")
-    else:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
-        ]
+    st.session_state.messages = [
+        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
+    ]
 
-# Load textbooks if not loaded
+# Load textbooks if not loaded (This is the cache-like behavior for the session)
 if "textbook_handles" not in st.session_state:
     st.sidebar.info("🚀 Starting Textbook Upload...")
     st.session_state.textbook_handles = upload_textbooks()
 
-# --- 10. SIDEBAR CONTROLS ---
-with st.sidebar:
-    st.markdown("### 💬 Chat Controls")
-    if st.button("🗑️ Clear Chat History"):
-        st.session_state.messages = [
-            {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
-        ]
-        cookies["chat_history"] = ""
-        cookies.save()
-        st.rerun()
-    
-    st.info("💾 **Chat auto-saves** - Your conversation persists across refreshes!")
-
-# --- 11. DISPLAY CHAT ---
+# --- 8. DISPLAY CHAT ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
@@ -400,12 +348,11 @@ for message in st.session_state.messages:
         else:
             st.markdown(message["content"])
 
-# --- 12. MAIN CHAT LOOP ---
+# --- 9. MAIN CHAT LOOP ---
 if prompt := st.chat_input("Ask Helix a question from your books, create diagrams, quizes and more..."):
     # Show User Message
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
-    save_chat_to_cookies()
 
     with st.chat_message("assistant"):
         # Show rotating thinking animation
@@ -414,7 +361,11 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
         
         try:
             # TEXT RESPONSE
-            # Use 1.5-flash or 2.0-flash-exp if 2.5 is unstable with files
+            # 1. Check if we have files
+            if not st.session_state.textbook_handles:
+                st.warning("⚠️ No textbooks found. Answering from general knowledge.")
+            
+            # 2. Generate Content
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash", 
                 contents=st.session_state.textbook_handles + [prompt],
@@ -430,7 +381,6 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
             thinking_placeholder.empty()
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
-            save_chat_to_cookies()
 
             # IMAGE GENERATION
             if "IMAGE_GEN:" in bot_text:
@@ -468,6 +418,5 @@ if prompt := st.chat_input("Ask Helix a question from your books, create diagram
         except Exception as e:
             thinking_placeholder.empty()
             st.error(f"Helix encountered an error: {e}")
-            # Optional: Check if it's a permission error and prompt refresh
             if "403" in str(e) or "PERMISSION_DENIED" in str(e):
-                st.warning("⚠️ Textbook session expired. Please refresh the page.")
+                st.warning("⚠️ Textbook session expired. Please refresh the page to reload books.")
