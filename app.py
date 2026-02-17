@@ -88,7 +88,7 @@ st.markdown("""
 }
 </style>
 
-<div class="big-title">🧬 helix.ai</div>
+<div class="big-title">📚 helix.ai</div>
 <div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
 """, unsafe_allow_html=True)
 
