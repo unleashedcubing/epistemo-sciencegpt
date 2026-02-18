@@ -39,7 +39,7 @@ st.markdown("""
 /* Status Indicator (Top Left - Moved Down) */
 .status-indicator {
   position: fixed;
-  top: 60px; /* Moved down from 15px */
+  top: 60px;
   left: 15px;
   display: flex;
   align-items: center;
@@ -246,12 +246,22 @@ def upload_textbooks():
     
     active_files = []
     
-    # 🔴 Initial Loading State
+    # 🔴 Initial Loading State (Icon)
     status_placeholder = st.empty()
     status_placeholder.markdown("""
         <div class="status-indicator status-loading">
             <span class="book-icon">📕</span>
             <div class="spinner"></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # 💬 POP-UP MESSAGE (ANIMATED)
+    msg_placeholder = st.empty()
+    with msg_placeholder.chat_message("assistant"):
+        st.markdown(f"""
+        <div class="thinking-container">
+            <span class="thinking-text">🔄 Helix is loading your textbooks...</span>
+            <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -264,6 +274,7 @@ def upload_textbooks():
                     <span class="book-icon">⚠️</span>
                 </div>
             """, unsafe_allow_html=True)
+            msg_placeholder.empty()
             return []
             
         pdf_map = {p.name.lower(): p for p in all_pdfs}
@@ -274,6 +285,7 @@ def upload_textbooks():
                 <span class="book-icon">⚠️</span>
             </div>
         """, unsafe_allow_html=True)
+        msg_placeholder.empty()
         return []
 
     for target_name in target_filenames:
@@ -318,12 +330,14 @@ def upload_textbooks():
                 <span class="book-icon">📗</span>
             </div>
         """, unsafe_allow_html=True)
+        msg_placeholder.empty()
     else:
         status_placeholder.markdown("""
             <div class="status-indicator status-error" title="No Books Loaded">
                 <span class="book-icon">⚠️</span>
             </div>
         """, unsafe_allow_html=True)
+        msg_placeholder.empty()
         
     return active_files
 
@@ -332,9 +346,9 @@ def show_thinking_animation_rotating(placeholder):
     thinking_messages = [
         "🔍 Helix is searching the textbooks 📚",
         "🧠 Helix is analyzing your question 💭",
-        "✨ Helix is forming your answer 📝",
+        "📖 Helix is consulting the resources 📊",
         "🔬 Helix is processing information 🧪",
-        "📖 Helix is consulting the resources 📊"
+        "✨ Helix is creating your answer 🎓"
     ]
     for message in thinking_messages:
         thinking_html = f"""
