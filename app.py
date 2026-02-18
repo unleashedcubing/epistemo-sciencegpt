@@ -36,11 +36,11 @@ st.markdown("""
   color: var(--text-color);
 }
 
-/* Status Indicator (Top Right) */
+/* Status Indicator (Top Left) */
 .status-indicator {
   position: fixed;
   top: 15px;
-  right: 15px;
+  left: 15px;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -48,7 +48,7 @@ st.markdown("""
   background-color: rgba(30, 30, 30, 0.8);
   border-radius: 20px;
   backdrop-filter: blur(8px);
-  z-index: 100000; /* Ensure on top */
+  z-index: 100000;
   box-shadow: 0 4px 12px rgba(0,0,0,0.2);
   border: 1px solid rgba(255,255,255,0.1);
   transition: all 0.3s ease;
@@ -439,4 +439,3 @@ if prompt := st.chat_input("Ask Helix a question..."):
             st.error(f"Helix Error: {e}")
             if "403" in str(e):
                 st.warning("⚠️ Session expired. Refresh page.")
-
