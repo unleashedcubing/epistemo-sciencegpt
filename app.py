@@ -360,7 +360,7 @@ def show_thinking_animation_rotating(placeholder):
         </div>
         """
         placeholder.markdown(thinking_html, unsafe_allow_html=True)
-        time.sleep(3)
+        time.sleep(2)
 
 def show_thinking_animation(message="Helix is thinking"):
     return st.markdown(f"""
