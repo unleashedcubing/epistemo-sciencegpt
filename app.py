@@ -39,31 +39,51 @@ st.markdown("""
 /* Status Indicator (Top Right) */
 .status-indicator {
   position: fixed;
-  top: 10px;
-  right: 10px;
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
+  top: 15px;
+  right: 15px;
   display: flex;
   align-items: center;
-  justify_content: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background-color: rgba(30, 30, 30, 0.8);
+  border-radius: 20px;
+  backdrop-filter: blur(8px);
+  z-index: 100000; /* Ensure on top */
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.1);
+  transition: all 0.3s ease;
+}
+
+.book-icon {
   font-size: 24px;
-  background-color: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(5px);
-  z-index: 9999;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-  transition: all 0.5s ease;
+}
+
+/* Loading Spinner */
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: #00d4ff;
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Status Colors */
-.status-loading { border: 2px solid #ff4b4b; color: #ff4b4b; animation: pulse-red 2s infinite; }
-.status-ready { border: 2px solid #00c04b; color: #00c04b; background-color: rgba(0, 192, 75, 0.1); }
-.status-error { border: 2px solid #ffa500; color: #ffa500; }
+.status-loading { border-color: #ff4b4b; }
+.status-loading .book-icon { animation: pulse-red 1.5s infinite; }
+
+.status-ready { border-color: #00c04b; background-color: rgba(0, 192, 75, 0.15); }
+
+.status-error { border-color: #ffa500; }
 
 @keyframes pulse-red {
-  0% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0.4); }
-  70% { box-shadow: 0 0 0 10px rgba(255, 75, 75, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0); }
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.1); opacity: 0.7; }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 /* Title Styles */
@@ -89,8 +109,6 @@ st.markdown("""
   font-size: 18px;
   margin-bottom: 30px;
 }
-
-/* Chat Animation */
 .thinking-container {
   display: flex;
   align-items: center;
@@ -228,30 +246,34 @@ def upload_textbooks():
     
     active_files = []
     
-    # Placeholder for status
+    # 🔴 Initial Loading State
     status_placeholder = st.empty()
-    status_placeholder.markdown(
-        '<div class="status-indicator status-loading" title="Loading Books...">📕</div>', 
-        unsafe_allow_html=True
-    )
+    status_placeholder.markdown("""
+        <div class="status-indicator status-loading">
+            <span class="book-icon">📕</span>
+            <div class="spinner"></div>
+        </div>
+        """, unsafe_allow_html=True)
 
     try:
         cwd = Path.cwd()
         all_pdfs = list(cwd.rglob("*.pdf"))
         if len(all_pdfs) == 0:
-            status_placeholder.markdown(
-                '<div class="status-indicator status-error" title="No PDFs Found">⚠️</div>', 
-                unsafe_allow_html=True
-            )
+            status_placeholder.markdown("""
+                <div class="status-indicator status-error" title="No PDFs Found">
+                    <span class="book-icon">⚠️</span>
+                </div>
+            """, unsafe_allow_html=True)
             return []
             
         pdf_map = {p.name.lower(): p for p in all_pdfs}
             
     except Exception:
-        status_placeholder.markdown(
-            '<div class="status-indicator status-error" title="File System Error">⚠️</div>', 
-            unsafe_allow_html=True
-        )
+        status_placeholder.markdown("""
+            <div class="status-indicator status-error">
+                <span class="book-icon">⚠️</span>
+            </div>
+        """, unsafe_allow_html=True)
         return []
 
     for target_name in target_filenames:
@@ -259,10 +281,8 @@ def upload_textbooks():
         
         if found_path:
             try:
-                # Check Size
                 if found_path.stat().st_size == 0: continue
                 
-                # Upload with Retry
                 uploaded_file = None
                 upload_success = False
                 
@@ -279,7 +299,6 @@ def upload_textbooks():
 
                 if not upload_success: continue
 
-                # Wait for Processing
                 start_time = time.time()
                 while uploaded_file.state.name == "PROCESSING":
                     if time.time() - start_time > 45: break
@@ -292,17 +311,19 @@ def upload_textbooks():
             except Exception:
                 continue
 
-    # Update Status Icon
+    # 🟢 Success State
     if active_files:
-        status_placeholder.markdown(
-            '<div class="status-indicator status-ready" title="Books Ready!">📗</div>', 
-            unsafe_allow_html=True
-        )
+        status_placeholder.markdown("""
+            <div class="status-indicator status-ready" title="Books Ready!">
+                <span class="book-icon">📗</span>
+            </div>
+        """, unsafe_allow_html=True)
     else:
-        status_placeholder.markdown(
-            '<div class="status-indicator status-error" title="No Books Loaded">⚠️</div>', 
-            unsafe_allow_html=True
-        )
+        status_placeholder.markdown("""
+            <div class="status-indicator status-error" title="No Books Loaded">
+                <span class="book-icon">⚠️</span>
+            </div>
+        """, unsafe_allow_html=True)
         
     return active_files
 
@@ -347,15 +368,17 @@ if "textbook_handles" not in st.session_state:
 else:
     # Persist the green icon if already loaded
     if st.session_state.textbook_handles:
-        st.markdown(
-            '<div class="status-indicator status-ready" title="Books Ready!">📗</div>', 
-            unsafe_allow_html=True
-        )
+        st.markdown("""
+            <div class="status-indicator status-ready" title="Books Ready!">
+                <span class="book-icon">📗</span>
+            </div>
+        """, unsafe_allow_html=True)
     else:
-        st.markdown(
-            '<div class="status-indicator status-error" title="No Books Loaded">⚠️</div>', 
-            unsafe_allow_html=True
-        )
+        st.markdown("""
+            <div class="status-indicator status-error" title="No Books Loaded">
+                <span class="book-icon">⚠️</span>
+            </div>
+        """, unsafe_allow_html=True)
 
 # --- 8. DISPLAY CHAT ---
 for message in st.session_state.messages:
@@ -416,3 +439,4 @@ if prompt := st.chat_input("Ask Helix a question..."):
             st.error(f"Helix Error: {e}")
             if "403" in str(e):
                 st.warning("⚠️ Session expired. Refresh page.")
+
