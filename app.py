@@ -90,34 +90,102 @@ st.markdown("""
 # --- 4. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
-(Keep the rest of your instructions here as they were...)
+
+***REMEMBER VERY IMPORTANT!!!!!: The moment you recieve the user prompt, wait 4 seconds and read the prompt fully. If you are 90% sure that the user's query is not related to the book sources, don't bother checking the books, answer based on internet/your own way. If you aren't sure, check the books.***
+
+IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
+ALSO: The textbooks were too big, so I split each into 2. The names would have ..._1.pdf or ..._2.pdf. The ... area would have the year. Check both when queries come up.
+ALSO: In MCQs, randomize the answers, because in a previous test I did using you, the answers were 1)C, 2)C, 3)C, 4)C. REMEMBER, RANDOMIZE MCQ ANSWERS
+ALSO: Use BOTH WB (Workbook) AND TB (Textbook) because the WB has questions mainly, but SB has theory. Using BOTH WILL GIVE YOU A WIDE RANGE OF QUESTIONS.
+ALSO: DO NOT INTRODUCE YOURSELF LIKE "I am Helix!" as I have already created and introduction message. Just get to the user's query immediately.
+
+### RULE 1: SOURCE PRIORITY
+- First, ALWAYS check the content of the uploaded PDF files to answer a question.
+- If the answer is NOT in the textbook, you must state: "I couldn't find this in your textbook, but here is what I found online:" and then answer using your general knowledge.
+- The subject is seen in the last part, like this: _Eng.pdf, _Math.pdf, _Sci.pdf
+
+### RULE 2: STAGE 9 ENGLISH TB/WB: ***IMPORTANT, VERY***
+- I couldn't find the TB/WB source for Stage 9 English, so you will go off of this table of contents:
+Chapter 1 • Writing to explore and reflect
+1.1 What is travel writing?
+1.2 Selecting and noting key information in travel texts
+1.3 Comparing tone and register in travel texts
+1.4 Responding to travel writing
+1.5 Understanding grammatical choices in travel writing
+1.6 Varying sentences for effect
+1.7 Boost your vocabulary
+1.8 Creating a travel account
+Chapter 2 • Writing to inform and explain
+2.1 Matching informative texts to audience and purpose
+2.2 Using formal and informal language in information texts
+2.3 Comparing information texts
+2.4 Using discussion to prepare for a written assignment
+2.5 Planning information texts to suit different audiences
+2.6 Shaping paragraphs to suit audience and purpose
+2.7 Crafting sentences for a range of effects
+2.8 Making explanations precise and concise
+2.9 Writing encyclopedia entries
+Chapter 3 • Writing to argue and persuade
+3.1 Reviewing persuasive techniques
+3.2 Commenting on use of language to persuade
+3.3 Exploring layers of persuasive language
+3.4 Responding to the use of persuasive language
+3.5 Adapting grammar choices to create effects in argument writing
+3.6 Organising a whole argument effectively
+3.7 Organising an argument within each paragraph
+3.8 Presenting and responding to a question
+3.9 Producing an argumentative essay
+Chapter 4 • Descriptive writing
+4.1 Analysing how atmospheres are created
+4.2 Developing analysis of a description
+4.3 Analysing atmospheric descriptions
+4.4 Using images to inspire description
+4.5 Using language to develop an atmosphere
+4.6 Sustaining a cohesive atmosphere
+4.7 Creating atmosphere through punctuation
+4.8 Using structural devices to build up atmosphere
+4.9 Producing a powerful description
+Chapter 5 • Narrative writing
+5.1 Understanding story openings
+5.2 Exploring setting and atmosphere
+5.3 Introducing characters in stories
+5.4 Responding to powerful narrative
+5.5 Pitching a story
+5.6 Creating narrative suspense and climax
+5.7 Creating character
+5.8 Using tenses in narrative
+5.9 Using pronouns and sentence order for effect
+5.10 Creating a thriller
+Chapter 6 • Writing to analyse and compare
+6.1 Analysing implicit meaning in non-fiction texts
+6.2 Analysing how a play's key elements create different effects
+6.3 Using discussion skills to analyse carefully
+6.4 Comparing effectively through punctuation and grammar
+6.5 Analysing two texts
+Chapter 7 • Testing your skills
+7.1 Reading and writing questions on non-fiction texts
+7.2 Reading and writing questions on fiction texts
+7.3 Assessing your progress: non-fiction reading and writing
+7.4 Assessing your progress: fiction reading and writing
+
+### RULE 3: IMAGE GENERATION (STRICT)
+- **IF THE USER ASKS FOR A NORMAL DIAGRAM:** If they just ask for a "diagram of a cell" or "picture of a heart", or a infographic or mindmap, or a mind map for math, you MUST output this specific command and nothing else:
+  IMAGE_GEN: [A high-quality illustration of the topic, detailed, white background, with labels]
+
+### RULE 4: QUESTION PAPERS
+- When asked to create a question paper, quiz, or test, strictly follow this structure:
+  - Science (Checkpoint style): produce Paper 1 and/or Paper 2 (default both) as a 50‑mark, ~45‑minute structured written paper with numbered questions showing marks like "(3)", mixing knowledge/application plus data handling (tables/graphs) and at least one investigation/practical-skills question (variables, fair test, reliability, improvements) and at least one diagram task; then include a point-based mark scheme with working/units for calculations.
+  - Mathematics (Checkpoint style): produce Paper 1 non‑calculator and Paper 2 calculator (default both), each ~45 minutes and 50 marks, mostly structured questions with marks shown, covering arithmetic/fractions/percent, algebra, geometry, and data/statistics, including at least one multi-step word problem and requiring "show working"; then give an answer key with method marks for 2+ mark items.
+  - English (Checkpoint style): produce Paper 1 Non‑fiction and Paper 2 Fiction (default both), each ~45 minutes and 50 marks, using original passages you write (no copyrighted extracts), with structured comprehension (literal + inference + writer's effect) and one longer directed/creative writing task per paper; then include a mark scheme (acceptable reading points per mark) plus a simple writing rubric (content/organisation/style & accuracy) and a brief high-scoring outline.
+
+### RULE 5: ARMAAN STYLE
+If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist/mathematician/writer terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
 """
 
-# --- 5. ROBUST FILE FINDER & UPLOADER ---
-def find_file_robust(target_filename):
-    """
-    Searches for a file recursively in the current directory.
-    Handles case-sensitivity mismatches.
-    """
-    target_lower = target_filename.lower()
-    root_dir = Path.cwd()
-    
-    # 1. Direct check
-    if (root_dir / target_filename).exists():
-        return root_dir / target_filename
-        
-    # 2. Walk through all directories
-    for path in root_dir.rglob("*"):
-        if path.is_file():
-            if path.name == target_filename:
-                return path
-            if path.name.lower() == target_lower:
-                return path
-    return None
-
+# --- 5. ROBUST FILE UPLOADER & CACHING ---
 def upload_textbooks():
     """
-    Finds and uploads textbooks.
+    Finds and uploads textbooks with robust error handling for empty/corrupt files.
     """
     target_filenames = [
         "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
@@ -134,14 +202,20 @@ def upload_textbooks():
     cwd = Path.cwd()
     st.sidebar.code(f"Current Dir: {cwd}")
     
-    all_pdfs = list(cwd.rglob("*.pdf"))
-    st.sidebar.write(f"📄 Total PDFs found in tree: {len(all_pdfs)}")
-    if len(all_pdfs) > 0:
-        st.sidebar.json([p.name for p in all_pdfs[:5]]) # Show first 5 found
-    else:
-        st.sidebar.error("❌ ZERO PDFs found. Did you commit them to Git?")
-        st.sidebar.info("Common fix: Make sure files are not in .gitignore")
+    # Find all PDFs recursively
+    try:
+        all_pdfs = list(cwd.rglob("*.pdf"))
+        st.sidebar.write(f"📄 Total PDFs found: {len(all_pdfs)}")
+        
+        if len(all_pdfs) == 0:
+            st.sidebar.error("❌ ZERO PDFs found. Did you commit them to Git?")
+            return []
+    except Exception as e:
+        st.sidebar.error(f"Error scanning directory: {e}")
         return []
+
+    # Map filename (lowercase) to full path for easy lookup
+    pdf_map = {p.name.lower(): p for p in all_pdfs}
 
     # Progress bar
     progress_bar = st.sidebar.progress(0)
@@ -151,153 +225,35 @@ def upload_textbooks():
         progress = (i + 1) / len(target_filenames)
         progress_bar.progress(progress)
         
-        # Use robust finder
-        found_path = find_file_robust(target_name)
+        # Robust lookup
+        found_path = pdf_map.get(target_name.lower())
         
         if found_path:
             try:
-                # Check size
-                file_size_mb = found_path.stat().st_size / (1024 * 1024)
-                status_text.text(f"⬆️ Uploading: {found_path.name} ({file_size_mb:.1f} MB)...")
+                # 1. Check File Size
+                file_size_bytes = found_path.stat().st_size
+                file_size_mb = file_size_bytes / (1024 * 1024)
                 
-                # UPLOAD
-                uploaded_file = client.files.upload(
-                    file=found_path,
-                    config={'mime_type': 'application/pdf'}
-                )
+                if file_size_bytes == 0:
+                    st.sidebar.error(f"❌ Skipped {target_name}: File is empty (0 bytes)!")
+                    continue
                 
-                # WAIT
-                start_time = time.time()
-                while uploaded_file.state.name == "PROCESSING":
-                    if time.time() - start_time > 30:
-                        st.sidebar.warning(f"⚠️ Timeout: {target_name}")
-                        break
-                    time.sleep(1)
-                    uploaded_file = client.files.get(name=uploaded_file.name)
+                status_text.text(f"⬆️ Uploading: {target_name} ({file_size_mb:.1f} MB)...")
                 
-                if uploaded_file.state.name == "ACTIVE":
-                    active_files.append(uploaded_file)
-                else:
-                    st.sidebar.error(f"❌ Failed: {target_name} ({uploaded_file.state.name})")
-                    
-            except Exception as e:
-                st.sidebar.error(f"🚨 Error {target_name}: {e}")
-        else:
-            # File truly not found
-            # Optional: warn only for specific missing files to reduce clutter
-            if i < 3: # Only show first few missing to avoid spamming
-                st.sidebar.warning(f"⚠️ Not found: {target_name}")
-    
-    status_text.empty()
-    progress_bar.empty()
-    
-    if active_files:
-        st.sidebar.success(f"📚 {len(active_files)} Books Ready!")
-    else:
-        st.sidebar.error("❌ No books loaded.")
-        
-    return active_files
-
-# --- 6. ANIMATION FUNCTIONS ---
-def show_thinking_animation_rotating(placeholder):
-    thinking_messages = [
-        "🔍 Helix is searching the textbooks 📚",
-        "🧠 Helix is analyzing your question 💭",
-        "✨ Helix is forming your answer 📝",
-        "🔬 Helix is processing information 🧪",
-        "📖 Helix is consulting the resources 📊"
-    ]
-    for message in thinking_messages:
-        thinking_html = f"""
-        <div class="thinking-container">
-            <span class="thinking-text">{message}</span>
-            <div class="thinking-dots">
-                <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
-            </div>
-        </div>
-        """
-        placeholder.markdown(thinking_html, unsafe_allow_html=True)
-        time.sleep(3)
-
-def show_thinking_animation(message="Helix is thinking"):
-    return st.markdown(f"""
-    <div class="thinking-container">
-        <span class="thinking-text">{message}</span>
-        <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# --- 7. INITIALIZE SESSION ---
-if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
-    ]
-
-# Start upload if needed
-if "textbook_handles" not in st.session_state:
-    st.sidebar.info("🚀 Searching for Books...")
-    st.session_state.textbook_handles = upload_textbooks()
-
-# --- 8. DISPLAY CHAT ---
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        if message.get("is_image"):
-            st.image(message["content"])
-        else:
-            st.markdown(message["content"])
-
-# --- 9. MAIN LOOP ---
-if prompt := st.chat_input("Ask Helix a question..."):
-    st.chat_message("user").markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
-
-    with st.chat_message("assistant"):
-        thinking_placeholder = st.empty()
-        show_thinking_animation_rotating(thinking_placeholder)
-        
-        try:
-            # 1. Warn if no files
-            if not st.session_state.textbook_handles:
-                st.warning("⚠️ Helix couldn't find your textbooks. Answering with general knowledge.")
-            
-            # 2. Generate
-            text_response = client.models.generate_content(
-                model="gemini-2.5-flash", 
-                contents=st.session_state.textbook_handles + [prompt],
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    tools=[{"google_search": {}}]
-                )
-            )
-            
-            bot_text = text_response.text
-            thinking_placeholder.empty()
-            st.markdown(bot_text)
-            st.session_state.messages.append({"role": "assistant", "content": bot_text})
-
-            # 3. Image Gen
-            if "IMAGE_GEN:" in bot_text:
-                try:
-                    img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
-                    img_thinking = st.empty()
-                    with img_thinking: show_thinking_animation("🖌️ Painting diagram...")
-                    
-                    img_resp = client.models.generate_content(
-                        model="gemini-3-pro-image-preview",
-                        contents=[img_desc],
-                        config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
-                    )
-                    
-                    for part in img_resp.parts:
-                        if part.inline_data:
-                            st.image(part.inline_data.data, caption="Generated by Helix")
-                            st.session_state.messages.append({"role": "assistant", "content": part.inline_data.data, "is_image": True})
-                            img_thinking.empty()
-                except Exception as e:
-                    st.error(f"Image error: {e}")
-
-        except Exception as e:
-            thinking_placeholder.empty()
-            st.error(f"Helix Error: {e}")
-            if "403" in str(e):
-                st.warning("⚠️ Session expired. Refresh page.")
+                # 2. UPLOAD with Retry
+                uploaded_file = None
+                upload_success = False
+                
+                for attempt in range(2): # Try twice
+                    try:
+                        uploaded_file = client.files.upload(
+                            file=found_path,
+                            config={'mime_type': 'application/pdf'}
+                        )
+                        upload_success = True
+                        break # Success!
+                    except Exception as upload_err:
+                        if attempt == 0:
+                            time.sleep(2) # Wait and retry
+                        else:
+                            st.sidebar.warning(f"⚠️ Upload failed f
