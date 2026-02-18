@@ -407,4 +407,109 @@ if "textbook_handles" not in st.session_state:
 else:
     # Persist the green icon if already loaded
     st.markdown("""
-        <div class="st
+        <div class="status-indicator status-ready" title="Books Ready!">
+            <span class="book-icon">📗</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+# --- 8. DISPLAY CHAT ---
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        if message.get("is_image"):
+            st.image(message["content"])
+        else:
+            st.markdown(message["content"])
+
+# --- 9. MAIN LOOP ---
+if prompt := st.chat_input("Ask Helix a question..."):
+    st.chat_message("user").markdown(prompt)
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    with st.chat_message("assistant"):
+        thinking_placeholder = st.empty()
+        show_thinking_animation_rotating(thinking_placeholder)
+        
+        try:
+            # 1. Select RELEVANT books only
+            relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
+            
+            # 2. Generate
+            text_response = client.models.generate_content(
+                model="gemini-2.5-flash", 
+                contents=relevant_books + [prompt],
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    tools=[{"google_search": {}}]
+                )
+            )
+            
+            bot_text = text_response.text
+            thinking_placeholder.empty()
+            st.markdown(bot_text)
+            st.session_state.messages.append({"role": "assistant", "content": bot_text})
+
+            # 3. Image Gen (Robust Dual-Model Strategy)
+            if "IMAGE_GEN:" in bot_text:
+                img_thinking = st.empty()
+                
+                try:
+                    # Clean the description
+                    img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
+                    img_desc = img_desc.replace("[", "").replace("]", "") 
+                    
+                    with img_thinking: show_thinking_animation("🖌️ Painting diagram...")
+                    
+                    # ATTEMPT 1: Primary Model (Gemini 3 Preview)
+                    try:
+                        img_resp = client.models.generate_content(
+                            model="gemini-3-pro-image-preview",
+                            contents=[img_desc],
+                            config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
+                        )
+                        # Process response
+                        for part in img_resp.parts:
+                            if part.inline_data:
+                                image_bytes = part.inline_data.data
+                                st.image(image_bytes, caption=f"Generated: {img_desc}")
+                                st.session_state.messages.append({
+                                    "role": "assistant", 
+                                    "content": image_bytes, 
+                                    "is_image": True
+                                })
+                                img_thinking.empty()
+                                break # Success
+                                
+                    except Exception as primary_error:
+                        # ATTEMPT 2: Fallback Model (Imagen 3 Stable)
+                        img_resp = client.models.generate_images(
+                            model='imagen-3.0-generate-001',
+                            prompt=img_desc,
+                            config=types.GenerateImagesConfig(
+                                number_of_images=1,
+                            )
+                        )
+                        
+                        for img in img_resp.generated_images:
+                            image_bytes = img.image.image_bytes
+                            st.image(image_bytes, caption=f"Generated: {img_desc}")
+                            st.session_state.messages.append({
+                                "role": "assistant", 
+                                "content": image_bytes, 
+                                "is_image": True
+                            })
+                            img_thinking.empty()
+
+                except Exception as final_error:
+                    img_thinking.empty()
+                    st.error(f"Image generation failed: {final_error}")
+                    st.info("💡 The image servers are currently overloaded. Please try again in a minute.")
+
+        except Exception as e:
+            thinking_placeholder.empty()
+            st.error(f"Helix Error: {e}")
+            if "403" in str(e):
+                st.warning("⚠️ Session expired. Refresh page.")
+            elif "429" in str(e):
+                st.warning("⚠️ Too many requests. Please wait a moment.")
+            elif "400" in str(e):
+                st.warning("⚠️ Query too complex. Try asking about a specific subject (Math, Science, or English).")
