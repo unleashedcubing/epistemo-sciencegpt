@@ -210,12 +210,13 @@ def upload_textbooks():
         if len(all_pdfs) == 0:
             st.sidebar.error("❌ ZERO PDFs found. Did you commit them to Git?")
             return []
+            
+        # Map filename (lowercase) to full path for easy lookup
+        pdf_map = {p.name.lower(): p for p in all_pdfs}
+            
     except Exception as e:
         st.sidebar.error(f"Error scanning directory: {e}")
         return []
-
-    # Map filename (lowercase) to full path for easy lookup
-    pdf_map = {p.name.lower(): p for p in all_pdfs}
 
     # Progress bar
     progress_bar = st.sidebar.progress(0)
@@ -256,4 +257,141 @@ def upload_textbooks():
                         if attempt == 0:
                             time.sleep(2) # Wait and retry
                         else:
-                            st.sidebar.warning(f"⚠️ Upload failed f
+                            st.sidebar.warning(f"⚠️ Upload failed for {target_name}: {upload_err}")
+
+                if not upload_success:
+                    continue
+
+                # 3. WAIT for Processing
+                start_time = time.time()
+                while uploaded_file.state.name == "PROCESSING":
+                    if time.time() - start_time > 60: # Extended timeout to 60s
+                        st.sidebar.warning(f"⚠️ Timeout: {target_name}")
+                        break
+                    time.sleep(2)
+                    uploaded_file = client.files.get(name=uploaded_file.name)
+                
+                if uploaded_file.state.name == "ACTIVE":
+                    active_files.append(uploaded_file)
+                else:
+                    st.sidebar.error(f"❌ Failed: {target_name} ({uploaded_file.state.name})")
+                    
+            except Exception as e:
+                st.sidebar.error(f"🚨 Error {target_name}: {e}")
+        else:
+            # Silent fail for missing files to avoid clutter
+            pass
+    
+    status_text.empty()
+    progress_bar.empty()
+    
+    if active_files:
+        st.sidebar.success(f"📚 {len(active_files)} Books Ready!")
+    else:
+        st.sidebar.error("❌ No books loaded.")
+        
+    return active_files
+
+# --- 6. ANIMATION FUNCTIONS ---
+def show_thinking_animation_rotating(placeholder):
+    thinking_messages = [
+        "🔍 Helix is searching the textbooks 📚",
+        "🧠 Helix is analyzing your question 💭",
+        "✨ Helix is forming your answer 📝",
+        "🔬 Helix is processing information 🧪",
+        "📖 Helix is consulting the resources 📊"
+    ]
+    for message in thinking_messages:
+        thinking_html = f"""
+        <div class="thinking-container">
+            <span class="thinking-text">{message}</span>
+            <div class="thinking-dots">
+                <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
+            </div>
+        </div>
+        """
+        placeholder.markdown(thinking_html, unsafe_allow_html=True)
+        time.sleep(3)
+
+def show_thinking_animation(message="Helix is thinking"):
+    return st.markdown(f"""
+    <div class="thinking-container">
+        <span class="thinking-text">{message}</span>
+        <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- 7. INITIALIZE SESSION ---
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
+    ]
+
+# Start upload if needed
+if "textbook_handles" not in st.session_state:
+    st.sidebar.info("🚀 Searching for Books...")
+    st.session_state.textbook_handles = upload_textbooks()
+
+# --- 8. DISPLAY CHAT ---
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        if message.get("is_image"):
+            st.image(message["content"])
+        else:
+            st.markdown(message["content"])
+
+# --- 9. MAIN LOOP ---
+if prompt := st.chat_input("Ask Helix a question..."):
+    st.chat_message("user").markdown(prompt)
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    with st.chat_message("assistant"):
+        thinking_placeholder = st.empty()
+        show_thinking_animation_rotating(thinking_placeholder)
+        
+        try:
+            # 1. Warn if no files
+            if not st.session_state.textbook_handles:
+                st.warning("⚠️ Helix couldn't find your textbooks. Answering with general knowledge.")
+            
+            # 2. Generate
+            text_response = client.models.generate_content(
+                model="gemini-2.5-flash", 
+                contents=st.session_state.textbook_handles + [prompt],
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    tools=[{"google_search": {}}]
+                )
+            )
+            
+            bot_text = text_response.text
+            thinking_placeholder.empty()
+            st.markdown(bot_text)
+            st.session_state.messages.append({"role": "assistant", "content": bot_text})
+
+            # 3. Image Gen
+            if "IMAGE_GEN:" in bot_text:
+                try:
+                    img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
+                    img_thinking = st.empty()
+                    with img_thinking: show_thinking_animation("🖌️ Painting diagram...")
+                    
+                    img_resp = client.models.generate_content(
+                        model="gemini-3-pro-image-preview",
+                        contents=[img_desc],
+                        config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
+                    )
+                    
+                    for part in img_resp.parts:
+                        if part.inline_data:
+                            st.image(part.inline_data.data, caption="Generated by Helix")
+                            st.session_state.messages.append({"role": "assistant", "content": part.inline_data.data, "is_image": True})
+                            img_thinking.empty()
+                except Exception as e:
+                    st.error(f"Image error: {e}")
+
+        except Exception as e:
+            thinking_placeholder.empty()
+            st.error(f"Helix Error: {e}")
+            if "403" in str(e):
+                st.warning("⚠️ Session expired. Refresh page.")
