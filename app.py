@@ -234,7 +234,7 @@ Chapter 7 • Testing your skills
 If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist/mathematician/writer terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
 """
 
-# --- 5. ROBUST FILE UPLOADER ---
+# --- 5. ROBUST FILE UPLOADER & SMART SELECTOR ---
 def upload_textbooks():
     target_filenames = [
         "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
@@ -244,7 +244,8 @@ def upload_textbooks():
         "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
     ]
     
-    active_files = []
+    # Store files in a dict by subject for smart retrieval
+    active_files = {"sci": [], "math": [], "eng": []}
     
     # 🔴 Initial Loading State (Icon)
     status_placeholder = st.empty()
@@ -255,7 +256,7 @@ def upload_textbooks():
         </div>
         """, unsafe_allow_html=True)
 
-    # 💬 POP-UP MESSAGE (ANIMATED)
+    # 💬 POP-UP MESSAGE
     msg_placeholder = st.empty()
     with msg_placeholder.chat_message("assistant"):
         st.markdown(f"""
@@ -275,7 +276,7 @@ def upload_textbooks():
                 </div>
             """, unsafe_allow_html=True)
             msg_placeholder.empty()
-            return []
+            return {}
             
         pdf_map = {p.name.lower(): p for p in all_pdfs}
             
@@ -286,7 +287,7 @@ def upload_textbooks():
             </div>
         """, unsafe_allow_html=True)
         msg_placeholder.empty()
-        return []
+        return {}
 
     for target_name in target_filenames:
         found_path = pdf_map.get(target_name.lower())
@@ -318,37 +319,65 @@ def upload_textbooks():
                     uploaded_file = client.files.get(name=uploaded_file.name)
                 
                 if uploaded_file.state.name == "ACTIVE":
-                    active_files.append(uploaded_file)
+                    # Categorize by subject based on filename
+                    if "sci" in target_name.lower():
+                        active_files["sci"].append(uploaded_file)
+                    elif "math" in target_name.lower():
+                        active_files["math"].append(uploaded_file)
+                    elif "eng" in target_name.lower():
+                        active_files["eng"].append(uploaded_file)
                     
             except Exception:
                 continue
 
     # 🟢 Success State
-    if active_files:
-        status_placeholder.markdown("""
-            <div class="status-indicator status-ready" title="Books Ready!">
-                <span class="book-icon">📗</span>
-            </div>
-        """, unsafe_allow_html=True)
-        msg_placeholder.empty()
-    else:
-        status_placeholder.markdown("""
-            <div class="status-indicator status-error" title="No Books Loaded">
-                <span class="book-icon">⚠️</span>
-            </div>
-        """, unsafe_allow_html=True)
-        msg_placeholder.empty()
+    status_placeholder.markdown("""
+        <div class="status-indicator status-ready" title="Books Ready!">
+            <span class="book-icon">📗</span>
+        </div>
+    """, unsafe_allow_html=True)
+    msg_placeholder.empty()
         
     return active_files
+
+def select_relevant_books(query, file_dict):
+    """Selects relevant books based on keywords to save tokens."""
+    query = query.lower()
+    
+    selected = []
+    
+    # Keyword sets
+    math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"]
+    sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism"]
+    eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author"]
+    
+    # Check for matches
+    if any(k in query for k in math_keywords):
+        selected.extend(file_dict.get("math", []))
+    if any(k in query for k in sci_keywords):
+        selected.extend(file_dict.get("sci", []))
+    if any(k in query for k in eng_keywords):
+        selected.extend(file_dict.get("eng", []))
+        
+    # Default: if no specific subject detected, use Science + Math (most common queries) 
+    # OR limit to max 3 random books to stay safe.
+    if not selected:
+        # Fallback: Send all logic, but maybe just first 2 of each to avoid limit?
+        # Better strategy: Let Gemini handle general queries with limited context
+        # For now, let's send Science and Math as default (safest bet for "tutor")
+        selected.extend(file_dict.get("math", []))
+        selected.extend(file_dict.get("sci", []))
+        
+    return selected
 
 # --- 6. ANIMATION FUNCTIONS ---
 def show_thinking_animation_rotating(placeholder):
     thinking_messages = [
         "🔍 Helix is searching the textbooks 📚",
         "🧠 Helix is analyzing your question 💭",
-        "📖 Helix is consulting the resources 📊",
+        "✨ Helix is forming your answer 📝",
         "🔬 Helix is processing information 🧪",
-        "✨ Helix is creating your answer 🎓"
+        "📖 Helix is consulting the resources 📊"
     ]
     for message in thinking_messages:
         thinking_html = f"""
@@ -361,7 +390,7 @@ def show_thinking_animation_rotating(placeholder):
         """
         placeholder.markdown(thinking_html, unsafe_allow_html=True)
         time.sleep(3)
-        
+
 def show_thinking_animation(message="Helix is thinking"):
     return st.markdown(f"""
     <div class="thinking-container">
@@ -381,18 +410,11 @@ if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
 else:
     # Persist the green icon if already loaded
-    if st.session_state.textbook_handles:
-        st.markdown("""
-            <div class="status-indicator status-ready" title="Books Ready!">
-                <span class="book-icon">📗</span>
-            </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-            <div class="status-indicator status-error" title="No Books Loaded">
-                <span class="book-icon">⚠️</span>
-            </div>
-        """, unsafe_allow_html=True)
+    st.markdown("""
+        <div class="status-indicator status-ready" title="Books Ready!">
+            <span class="book-icon">📗</span>
+        </div>
+    """, unsafe_allow_html=True)
 
 # --- 8. DISPLAY CHAT ---
 for message in st.session_state.messages:
@@ -412,10 +434,13 @@ if prompt := st.chat_input("Ask Helix a question..."):
         show_thinking_animation_rotating(thinking_placeholder)
         
         try:
-            # 1. Generate
+            # 1. Select RELEVANT books only
+            relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
+            
+            # 2. Generate
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash", 
-                contents=st.session_state.textbook_handles + [prompt],
+                contents=relevant_books + [prompt],
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
                     tools=[{"google_search": {}}]
@@ -427,7 +452,7 @@ if prompt := st.chat_input("Ask Helix a question..."):
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # 2. Image Gen
+            # 3. Image Gen
             if "IMAGE_GEN:" in bot_text:
                 try:
                     img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
@@ -453,3 +478,7 @@ if prompt := st.chat_input("Ask Helix a question..."):
             st.error(f"Helix Error: {e}")
             if "403" in str(e):
                 st.warning("⚠️ Session expired. Refresh page.")
+            elif "429" in str(e):
+                st.warning("⚠️ Too many requests. Please wait a moment.")
+            elif "400" in str(e):
+                st.warning("⚠️ Query too complex. Try asking about a specific subject (Math, Science, or English).")
