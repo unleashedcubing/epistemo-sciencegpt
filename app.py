@@ -141,7 +141,7 @@ st.markdown("""
 
 # --- 4. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
-You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
+You are Helix, a friendly CIE Science/Math/English Tutor for Grade 6-8 students.
 
 ***REMEMBER VERY IMPORTANT!!!!!: The moment you recieve the user prompt, wait 4 seconds and read the prompt fully. If you are 90% sure that the user's query is not related to the book sources, don't bother checking the books, answer based on internet/your own way. If you aren't sure, check the books.***
 
@@ -220,7 +220,13 @@ Chapter 7 • Testing your skills
 7.3 Assessing your progress: non-fiction reading and writing
 7.4 Assessing your progress: fiction reading and writing
 
-### RULE 3: IMAGE GENERATION (STRICT)
+### RULE 2.5: COMP SCI
+I couldn't find the books for CS, so you have to use the index given in a pdf for this.
+
+### RULE 3: CBSE/CIE
+These books are common for both CIE and CBSE, although most probably CIE students will only use it. The Grade given by student will be CIE grade - 1, or the exact CBSE grade. For the books with cie/cbse, the grade in CIE is Book grade + 1 in stage, but when talking with user, do (CIE) Book grade - 1 or the exact (CIE/CBSE) grade.
+
+### RULE 3.5: IMAGE GENERATION (STRICT)
 - **IF THE USER ASKS FOR A NORMAL DIAGRAM:** If they just ask for a "diagram of a cell" or "picture of a heart", or a infographic or mindmap, or a mind map for math, you MUST output this specific command and nothing else:
   IMAGE_GEN: [A high-quality illustration of the topic, detailed, white background, with labels]
 
@@ -243,7 +249,7 @@ def upload_textbooks():
         "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
         "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
         "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf",
-        "CIE:CBSE_8_SB_Hindi.pdf", "CIE:CBSE_7_SB_Hindi.pdf", "CIE:CBSE_6,7,8_SYLLABUS_CompSci.pdf",
+        "CIE_CBSE_8_SB_Hindi.pdf", "CIE_CBSE_7_SB_Hindi.pdf", "CIE:CBSE_6,7,8_SYLLABUS_CompSci.pdf",
         "CIE:CBSE_6,7,8_SB_French_2.pdf", "CIE:CBSE_6,7,8_SB_French_1.pdf", "CIE:CBSE_6_SB_Hindi_5.pdf",
         "CIE:CBSE_6_SB_Hindi_4.pdf", "CIE:CBSE_6_SB_Hindi_3.pdf", "CIE:CBSE_6_SB_Hindi_2.pdf","CIE:CBSE_6_SB_Hindi_1.pdf"
     ]
@@ -421,7 +427,7 @@ def show_thinking_animation(message="Helix is thinking"):
 # --- 7. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
+        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** Always mention your grade in a query unless it is out of syllabus! \n\nWhat are we learning today?"}
     ]
 # Start upload if needed
 if "textbook_handles" not in st.session_state:
