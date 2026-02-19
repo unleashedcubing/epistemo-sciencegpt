@@ -432,12 +432,9 @@ def show_thinking_animation(message="Helix is thinking"):
 # --- 7. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!
-        I'm your friendly CIE tutor here to help you ace your CIE exams! 📖
-        I can answer your doubts, draw diagrams, and create quizes! 
-        📚Quick Reminder: Always mention your grade in a query unless it is out of syllabus! 
-        What are we learning today?"}
+        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** Always mention your grade in a query unless it is out of syllabus! \n\nWhat are we learning today?"}
     ]
+
 # Start upload if needed
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
