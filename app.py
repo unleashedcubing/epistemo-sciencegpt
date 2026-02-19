@@ -237,15 +237,20 @@ If a user asks you to reply in Armaan Style, you have to explain in expert physi
 # --- 5. ROBUST FILE UPLOADER & SMART SELECTOR ---
 def upload_textbooks():
     target_filenames = [
+        # Original Files
         "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
         "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
         "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
         "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
-        "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
+        "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf",
+        "CIE/CBSE_8_SB_Hindi.pdf", "CIE/CBSE_7_SB_Hindi.pdf", "CIE/CBSE_6,7,8_SYLLABUS_CompSci.pdf",
+        "CIE/CBSE_6,7,8_SB_French_2.pdf", "CIE/CBSE_6,7,8_SB_French_1.pdf", "CIE/CBSE_6_SB_Hindi_5.pdf",
+        "CIE/CBSE_6_SB_Hindi_4.pdf", "CIE/CBSE_6_SB_Hindi_3.pdf", "CIE/CBSE_6_SB_Hindi_2.pdf","CIE/CBSE_6_SB_Hindi_1.pdf"
     ]
+
     
     # Store files in a dict by subject for smart retrieval
-    active_files = {"sci": [], "math": [], "eng": []}
+        active_files = {"sci": [], "math": [], "eng": [], "hindi": [], "french": [], "cs": []}
     
     # 🔴 Initial Loading State (Icon)
     status_placeholder = st.empty()
@@ -256,7 +261,7 @@ def upload_textbooks():
         </div>
         """, unsafe_allow_html=True)
 
-    # 💬 POP-UP MESSAGE
+    # 💬 POP-UP MESSAGE (ANIMATED)
     msg_placeholder = st.empty()
     with msg_placeholder.chat_message("assistant"):
         st.markdown(f"""
@@ -290,7 +295,9 @@ def upload_textbooks():
         return {}
 
     for target_name in target_filenames:
-        found_path = pdf_map.get(target_name.lower())
+        # Handle path differences if needed, usually we just check filename
+        simple_name = target_name.split("/")[-1]
+        found_path = pdf_map.get(simple_name.lower())
         
         if found_path:
             try:
@@ -320,12 +327,19 @@ def upload_textbooks():
                 
                 if uploaded_file.state.name == "ACTIVE":
                     # Categorize by subject based on filename
-                    if "sci" in target_name.lower():
+                    lname = simple_name.lower()
+                    if "sci" in lname and "compsci" not in lname:
                         active_files["sci"].append(uploaded_file)
-                    elif "math" in target_name.lower():
+                    elif "math" in lname:
                         active_files["math"].append(uploaded_file)
-                    elif "eng" in target_name.lower():
+                    elif "eng" in lname:
                         active_files["eng"].append(uploaded_file)
+                    elif "hindi" in lname:
+                        active_files["hindi"].append(uploaded_file)
+                    elif "french" in lname:
+                        active_files["french"].append(uploaded_file)
+                    elif "compsci" in lname:
+                        active_files["cs"].append(uploaded_file)
                     
             except Exception:
                 continue
@@ -350,6 +364,9 @@ def select_relevant_books(query, file_dict):
     math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"]
     sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism"]
     eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author"]
+    hindi_keywords = ["hindi", "kavita", "kahani", "grammar"]
+    french_keywords = ["french", "francais", "verb", "conjugate"]
+    cs_keywords = ["computer", "python", "coding", "algorithm", "html", "css", "compsci"]
     
     # Check for matches
     if any(k in query for k in math_keywords):
@@ -358,13 +375,15 @@ def select_relevant_books(query, file_dict):
         selected.extend(file_dict.get("sci", []))
     if any(k in query for k in eng_keywords):
         selected.extend(file_dict.get("eng", []))
+    if any(k in query for k in hindi_keywords):
+        selected.extend(file_dict.get("hindi", []))
+    if any(k in query for k in french_keywords):
+        selected.extend(file_dict.get("french", []))
+    if any(k in query for k in cs_keywords):
+        selected.extend(file_dict.get("cs", []))
         
     # Default: if no specific subject detected, use Science + Math (most common queries) 
-    # OR limit to max 3 random books to stay safe.
     if not selected:
-        # Fallback: Send all logic, but maybe just first 2 of each to avoid limit?
-        # Better strategy: Let Gemini handle general queries with limited context
-        # For now, let's send Science and Math as default (safest bet for "tutor")
         selected.extend(file_dict.get("math", []))
         selected.extend(file_dict.get("sci", []))
         
@@ -404,7 +423,6 @@ if "messages" not in st.session_state:
     st.session_state.messages = [
         {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
     ]
-
 # Start upload if needed
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
