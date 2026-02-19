@@ -243,9 +243,9 @@ def upload_textbooks():
         "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
         "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
         "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf",
-        "CIE/CBSE_8_SB_Hindi.pdf", "CIE/CBSE_7_SB_Hindi.pdf", "CIE/CBSE_6,7,8_SYLLABUS_CompSci.pdf",
-        "CIE/CBSE_6,7,8_SB_French_2.pdf", "CIE/CBSE_6,7,8_SB_French_1.pdf", "CIE/CBSE_6_SB_Hindi_5.pdf",
-        "CIE/CBSE_6_SB_Hindi_4.pdf", "CIE/CBSE_6_SB_Hindi_3.pdf", "CIE/CBSE_6_SB_Hindi_2.pdf","CIE/CBSE_6_SB_Hindi_1.pdf"
+        "CIE:CBSE_8_SB_Hindi.pdf", "CIE:CBSE_7_SB_Hindi.pdf", "CIE:CBSE_6,7,8_SYLLABUS_CompSci.pdf",
+        "CIE:CBSE_6,7,8_SB_French_2.pdf", "CIE:CBSE_6,7,8_SB_French_1.pdf", "CIE:CBSE_6_SB_Hindi_5.pdf",
+        "CIE:CBSE_6_SB_Hindi_4.pdf", "CIE:CBSE_6_SB_Hindi_3.pdf", "CIE:CBSE_6_SB_Hindi_2.pdf","CIE:CBSE_6_SB_Hindi_1.pdf"
     ]
 
     
