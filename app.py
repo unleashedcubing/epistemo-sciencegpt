@@ -141,7 +141,7 @@ st.markdown("""
 
 # --- 4. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
-You are Helix, a friendly CIE Science/Math/English Tutor for Grade 6-8 students.
+You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
 ***REMEMBER VERY IMPORTANT!!!!!: The moment you recieve the user prompt, wait 4 seconds and read the prompt fully. If you are 90% sure that the user's query is not related to the book sources, don't bother checking the books, answer based on internet/your own way. If you aren't sure, check the books.***
 
@@ -220,18 +220,7 @@ Chapter 7 • Testing your skills
 7.3 Assessing your progress: non-fiction reading and writing
 7.4 Assessing your progress: fiction reading and writing
 
-### RULE 2.5: COMP SCI
-I couldn't find the books for CS, so you have to use the index given in a pdf for this.
-
-### RULE 3: CBSE/CIE
-These books are common for both CIE and CBSE, although most probably CIE students will only use it. 
-IF THE SUBJECT IS:
-Hindi, French or 2nd Language:
-The stage is grade + 1.
-Science, Math, English:
-The stage is as per books.
-
-### RULE 3.5: IMAGE GENERATION (STRICT)
+### RULE 3: IMAGE GENERATION (STRICT)
 - **IF THE USER ASKS FOR A NORMAL DIAGRAM:** If they just ask for a "diagram of a cell" or "picture of a heart", or a infographic or mindmap, or a mind map for math, you MUST output this specific command and nothing else:
   IMAGE_GEN: [A high-quality illustration of the topic, detailed, white background, with labels]
 
@@ -248,20 +237,15 @@ If a user asks you to reply in Armaan Style, you have to explain in expert physi
 # --- 5. ROBUST FILE UPLOADER & SMART SELECTOR ---
 def upload_textbooks():
     target_filenames = [
-        # Original Files
         "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
         "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
         "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
         "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
-        "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf",
-        "CIE_CBSE_8_SB_Hindi.pdf", "CIE_CBSE_7_SB_Hindi.pdf", "CIE:CBSE_6,7,8_SYLLABUS_CompSci.pdf",
-        "CIE:CBSE_6,7,8_SB_French_2.pdf", "CIE:CBSE_6,7,8_SB_French_1.pdf", "CIE:CBSE_6_SB_Hindi_5.pdf",
-        "CIE:CBSE_6_SB_Hindi_4.pdf", "CIE:CBSE_6_SB_Hindi_3.pdf", "CIE:CBSE_6_SB_Hindi_2.pdf","CIE:CBSE_6_SB_Hindi_1.pdf"
+        "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
     ]
-
     
     # Store files in a dict by subject for smart retrieval
-    active_files = {"sci": [], "math": [], "eng": [], "hindi": [], "french": [], "cs": []}
+    active_files = {"sci": [], "math": [], "eng": []}
     
     # 🔴 Initial Loading State (Icon)
     status_placeholder = st.empty()
@@ -272,7 +256,7 @@ def upload_textbooks():
         </div>
         """, unsafe_allow_html=True)
 
-    # 💬 POP-UP MESSAGE (ANIMATED)
+    # 💬 POP-UP MESSAGE
     msg_placeholder = st.empty()
     with msg_placeholder.chat_message("assistant"):
         st.markdown(f"""
@@ -306,9 +290,7 @@ def upload_textbooks():
         return {}
 
     for target_name in target_filenames:
-        # Handle path differences if needed, usually we just check filename
-        simple_name = target_name.split("/")[-1]
-        found_path = pdf_map.get(simple_name.lower())
+        found_path = pdf_map.get(target_name.lower())
         
         if found_path:
             try:
@@ -338,19 +320,12 @@ def upload_textbooks():
                 
                 if uploaded_file.state.name == "ACTIVE":
                     # Categorize by subject based on filename
-                    lname = simple_name.lower()
-                    if "sci" in lname and "compsci" not in lname:
+                    if "sci" in target_name.lower():
                         active_files["sci"].append(uploaded_file)
-                    elif "math" in lname:
+                    elif "math" in target_name.lower():
                         active_files["math"].append(uploaded_file)
-                    elif "eng" in lname:
+                    elif "eng" in target_name.lower():
                         active_files["eng"].append(uploaded_file)
-                    elif "hindi" in lname:
-                        active_files["hindi"].append(uploaded_file)
-                    elif "french" in lname:
-                        active_files["french"].append(uploaded_file)
-                    elif "compsci" in lname:
-                        active_files["cs"].append(uploaded_file)
                     
             except Exception:
                 continue
@@ -375,9 +350,6 @@ def select_relevant_books(query, file_dict):
     math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"]
     sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism"]
     eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author"]
-    hindi_keywords = ["hindi", "kavita", "kahani", "grammar"]
-    french_keywords = ["french", "francais", "verb", "conjugate"]
-    cs_keywords = ["computer", "python", "coding", "algorithm", "html", "css", "compsci"]
     
     # Check for matches
     if any(k in query for k in math_keywords):
@@ -386,15 +358,13 @@ def select_relevant_books(query, file_dict):
         selected.extend(file_dict.get("sci", []))
     if any(k in query for k in eng_keywords):
         selected.extend(file_dict.get("eng", []))
-    if any(k in query for k in hindi_keywords):
-        selected.extend(file_dict.get("hindi", []))
-    if any(k in query for k in french_keywords):
-        selected.extend(file_dict.get("french", []))
-    if any(k in query for k in cs_keywords):
-        selected.extend(file_dict.get("cs", []))
         
     # Default: if no specific subject detected, use Science + Math (most common queries) 
+    # OR limit to max 3 random books to stay safe.
     if not selected:
+        # Fallback: Send all logic, but maybe just first 2 of each to avoid limit?
+        # Better strategy: Let Gemini handle general queries with limited context
+        # For now, let's send Science and Math as default (safest bet for "tutor")
         selected.extend(file_dict.get("math", []))
         selected.extend(file_dict.get("sci", []))
         
@@ -432,7 +402,7 @@ def show_thinking_animation(message="Helix is thinking"):
 # --- 7. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** Always mention your grade in a query unless it is out of syllabus! \n\nWhat are we learning today?"}
+        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
     ]
 
 # Start upload if needed
@@ -482,41 +452,26 @@ if prompt := st.chat_input("Ask Helix a question..."):
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # 3. Image Gen (Using Pollinations.ai - 100% Free & Reliable)
+            # 3. Image Gen
             if "IMAGE_GEN:" in bot_text:
                 try:
-                    img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\\n")[0]
+                    img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                     img_thinking = st.empty()
                     with img_thinking: show_thinking_animation("🖌️ Painting diagram...")
                     
-                    import requests
-                    from io import BytesIO
+                    img_resp = client.models.generate_content(
+                        model="gemini-3-pro-image-preview",
+                        contents=[img_desc],
+                        config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
+                    )
                     
-                    # Clean the description
-                    img_desc = img_desc.replace("[", "").replace("]", "") 
-                    
-                    # Generate URL
-                    encoded_desc = requests.utils.quote(img_desc)
-                    image_url = f"https://image.pollinations.ai/prompt/{encoded_desc}?nologo=true"
-                    
-                    # Fetch Image
-                    response = requests.get(image_url)
-                    if response.status_code == 200:
-                        image_bytes = BytesIO(response.content)
-                        st.image(image_bytes, caption=f"Generated: {img_desc}")
-                        st.session_state.messages.append({
-                            "role": "assistant", 
-                            "content": image_bytes, 
-                            "is_image": True
-                        })
-                        img_thinking.empty()
-                    else:
-                        img_thinking.empty()
-                        st.error("Image generation service busy.")
-
-                except Exception as e:
-                    img_thinking.empty()
-                    st.error(f"Image generation failed: {e}")
+                    for part in img_resp.parts:
+                        if part.inline_data:
+                            st.image(part.inline_data.data, caption="Generated by Helix")
+                            st.session_state.messages.append({"role": "assistant", "content": part.inline_data.data, "is_image": True})
+                            img_thinking.empty()
+                except Exception:
+                    st.error("Image generation failed.")
 
         except Exception as e:
             thinking_placeholder.empty()
