@@ -26,6 +26,7 @@ except Exception as e:
 # --- 3. THEME CSS & STATUS INDICATOR ---
 st.markdown("""
 <style>
+/* Theme-aware app background */
 .stApp {
   background:
     radial-gradient(800px circle at 50% 0%,
@@ -34,6 +35,8 @@ st.markdown("""
     var(--background-color);
   color: var(--text-color);
 }
+
+/* Status Indicator (Top Left - Moved Down) */
 .status-indicator {
   position: fixed;
   top: 60px;
@@ -50,24 +53,40 @@ st.markdown("""
   border: 1px solid rgba(255,255,255,0.1);
   transition: all 0.3s ease;
 }
-.book-icon { font-size: 24px; }
+
+.book-icon {
+  font-size: 24px;
+}
+
+/* Loading Spinner */
 .spinner {
-  width: 18px; height: 18px;
+  width: 18px;
+  height: 18px;
   border: 3px solid rgba(255, 255, 255, 0.3);
   border-radius: 50%;
   border-top-color: #00d4ff;
   animation: spin 1s ease-in-out infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Status Colors */
 .status-loading { border-color: #ff4b4b; }
 .status-loading .book-icon { animation: pulse-red 1.5s infinite; }
+
 .status-ready { border-color: #00c04b; background-color: rgba(0, 192, 75, 0.15); }
+
 .status-error { border-color: #ffa500; }
+
 @keyframes pulse-red {
   0% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.1); opacity: 0.7; }
   100% { transform: scale(1); opacity: 1; }
 }
+
+/* Title Styles */
 .big-title {
   font-family: 'Inter', sans-serif;
   color: #00d4ff;
@@ -137,27 +156,82 @@ ALSO: DO NOT INTRODUCE YOURSELF LIKE "I am Helix!" as I have already created and
 - If the answer is NOT in the textbook, you must state: "I couldn't find this in your textbook, but here is what I found online:" and then answer using your general knowledge.
 - The subject is seen in the last part, like this: _Eng.pdf, _Math.pdf, _Sci.pdf
 
-### RULE 2: STAGE 9 ENGLISH TB/WB
+### RULE 2: STAGE 9 ENGLISH TB/WB: ***IMPORTANT, VERY***
 - I couldn't find the TB/WB source for Stage 9 English, so you will go off of this table of contents:
-Chapter 1: Writing to explore and reflect
-Chapter 2: Writing to inform and explain
-Chapter 3: Writing to argue and persuade
-Chapter 4: Descriptive writing
-Chapter 5: Narrative writing
-Chapter 6: Writing to analyse and compare
-Chapter 7: Testing your skills
+Chapter 1 • Writing to explore and reflect
+1.1 What is travel writing?
+1.2 Selecting and noting key information in travel texts
+1.3 Comparing tone and register in travel texts
+1.4 Responding to travel writing
+1.5 Understanding grammatical choices in travel writing
+1.6 Varying sentences for effect
+1.7 Boost your vocabulary
+1.8 Creating a travel account
+Chapter 2 • Writing to inform and explain
+2.1 Matching informative texts to audience and purpose
+2.2 Using formal and informal language in information texts
+2.3 Comparing information texts
+2.4 Using discussion to prepare for a written assignment
+2.5 Planning information texts to suit different audiences
+2.6 Shaping paragraphs to suit audience and purpose
+2.7 Crafting sentences for a range of effects
+2.8 Making explanations precise and concise
+2.9 Writing encyclopedia entries
+Chapter 3 • Writing to argue and persuade
+3.1 Reviewing persuasive techniques
+3.2 Commenting on use of language to persuade
+3.3 Exploring layers of persuasive language
+3.4 Responding to the use of persuasive language
+3.5 Adapting grammar choices to create effects in argument writing
+3.6 Organising a whole argument effectively
+3.7 Organising an argument within each paragraph
+3.8 Presenting and responding to a question
+3.9 Producing an argumentative essay
+Chapter 4 • Descriptive writing
+4.1 Analysing how atmospheres are created
+4.2 Developing analysis of a description
+4.3 Analysing atmospheric descriptions
+4.4 Using images to inspire description
+4.5 Using language to develop an atmosphere
+4.6 Sustaining a cohesive atmosphere
+4.7 Creating atmosphere through punctuation
+4.8 Using structural devices to build up atmosphere
+4.9 Producing a powerful description
+Chapter 5 • Narrative writing
+5.1 Understanding story openings
+5.2 Exploring setting and atmosphere
+5.3 Introducing characters in stories
+5.4 Responding to powerful narrative
+5.5 Pitching a story
+5.6 Creating narrative suspense and climax
+5.7 Creating character
+5.8 Using tenses in narrative
+5.9 Using pronouns and sentence order for effect
+5.10 Creating a thriller
+Chapter 6 • Writing to analyse and compare
+6.1 Analysing implicit meaning in non-fiction texts
+6.2 Analysing how a play's key elements create different effects
+6.3 Using discussion skills to analyse carefully
+6.4 Comparing effectively through punctuation and grammar
+6.5 Analysing two texts
+Chapter 7 • Testing your skills
+7.1 Reading and writing questions on non-fiction texts
+7.2 Reading and writing questions on fiction texts
+7.3 Assessing your progress: non-fiction reading and writing
+7.4 Assessing your progress: fiction reading and writing
 
 ### RULE 3: IMAGE GENERATION (STRICT)
-- If the user asks for a diagram, infographic, mindmap or illustration, output ONLY this command:
+- **IF THE USER ASKS FOR A NORMAL DIAGRAM:** If they just ask for a "diagram of a cell" or "picture of a heart", or a infographic or mindmap, or a mind map for math, you MUST output this specific command and nothing else:
   IMAGE_GEN: [A high-quality illustration of the topic, detailed, white background, with labels]
 
 ### RULE 4: QUESTION PAPERS
-- Science (Checkpoint style): 50-mark, ~45-minute paper with structured questions, data handling, practical skills, and a mark scheme.
-- Mathematics (Checkpoint style): Paper 1 non-calculator and Paper 2 calculator, each 50 marks ~45 mins, with an answer key.
-- English (Checkpoint style): Paper 1 Non-fiction and Paper 2 Fiction, each 50 marks ~45 mins, using original passages, with a mark scheme.
+- When asked to create a question paper, quiz, or test, strictly follow this structure:
+  - Science (Checkpoint style): produce Paper 1 and/or Paper 2 (default both) as a 50‑mark, ~45‑minute structured written paper with numbered questions showing marks like "(3)", mixing knowledge/application plus data handling (tables/graphs) and at least one investigation/practical-skills question (variables, fair test, reliability, improvements) and at least one diagram task; then include a point-based mark scheme with working/units for calculations.
+  - Mathematics (Checkpoint style): produce Paper 1 non‑calculator and Paper 2 calculator (default both), each ~45 minutes and 50 marks, mostly structured questions with marks shown, covering arithmetic/fractions/percent, algebra, geometry, and data/statistics, including at least one multi-step word problem and requiring "show working"; then give an answer key with method marks for 2+ mark items.
+  - English (Checkpoint style): produce Paper 1 Non‑fiction and Paper 2 Fiction (default both), each ~45 minutes and 50 marks, using original passages you write (no copyrighted extracts), with structured comprehension (literal + inference + writer's effect) and one longer directed/creative writing task per paper; then include a mark scheme (acceptable reading points per mark) plus a simple writing rubric (content/organisation/style & accuracy) and a brief high-scoring outline.
 
 ### RULE 5: ARMAAN STYLE
-If a user asks you to reply in Armaan Style, explain in expert physicist/chemist/biologist/mathematician/writer terms with difficult out-of-textbook sources. Simplify if the user wishes.
+If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist/mathematician/writer terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
 """
 
 # --- 5. ROBUST FILE UPLOADER & SMART SELECTOR ---
@@ -167,154 +241,134 @@ def upload_textbooks():
         "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
         "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
         "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
-        "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf",
-        "CIE_CBSE_8_SB_Hindi.pdf", "CIE_CBSE_7_SB_Hindi.pdf", "CIE:CBSE_6,7,8_SYLLABUS_CompSci.pdf",
-        "CIE:CBSE_6,7,8_SB_French_2.pdf", "CIE:CBSE_6,7,8_SB_French_1.pdf", "CIE:CBSE_6_SB_Hindi_5.pdf",
-        "CIE:CBSE_6_SB_Hindi_4.pdf", "CIE:CBSE_6_SB_Hindi_3.pdf", "CIE:CBSE_6_SB_Hindi_2.pdf", "CIE:CBSE_6_SB_Hindi_1.pdf"
+        "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
     ]
-
-    active_files = {"sci": [], "math": [], "eng": [], "hindi": [], "french": [], "cs": []}
-
-    # --- Loading status indicator ---
+    
+    # Store files in a dict by subject for smart retrieval
+    active_files = {"sci": [], "math": [], "eng": []}
+    
+    # 🔴 Initial Loading State (Icon)
     status_placeholder = st.empty()
-    status_placeholder.markdown(
-        '<div class="status-indicator status-loading">'
-        '<span class="book-icon">📕</span>'
-        '<div class="spinner"></div>'
-        '</div>',
-        unsafe_allow_html=True
-    )
+    status_placeholder.markdown("""
+        <div class="status-indicator status-loading">
+            <span class="book-icon">📕</span>
+            <div class="spinner"></div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # --- Loading message ---
+    # 💬 POP-UP MESSAGE
     msg_placeholder = st.empty()
     with msg_placeholder.chat_message("assistant"):
-        st.markdown(
-            '<div class="thinking-container">'
-            '<span class="thinking-text">🔄 Helix is loading your textbooks...</span>'
-            '<div class="thinking-dots">'
-            '<div class="thinking-dot"></div>'
-            '<div class="thinking-dot"></div>'
-            '<div class="thinking-dot"></div>'
-            '</div></div>',
-            unsafe_allow_html=True
-        )
+        st.markdown(f"""
+        <div class="thinking-container">
+            <span class="thinking-text">🔄 Helix is loading your textbooks...</span>
+            <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+        </div>
+        """, unsafe_allow_html=True)
 
     try:
         cwd = Path.cwd()
         all_pdfs = list(cwd.rglob("*.pdf"))
         if len(all_pdfs) == 0:
-            status_placeholder.markdown(
-                '<div class="status-indicator status-error">'
-                '<span class="book-icon">⚠️</span>'
-                '</div>',
-                unsafe_allow_html=True
-            )
+            status_placeholder.markdown("""
+                <div class="status-indicator status-error" title="No PDFs Found">
+                    <span class="book-icon">⚠️</span>
+                </div>
+            """, unsafe_allow_html=True)
             msg_placeholder.empty()
             return {}
+            
         pdf_map = {p.name.lower(): p for p in all_pdfs}
-
+            
     except Exception:
-        status_placeholder.markdown(
-            '<div class="status-indicator status-error">'
-            '<span class="book-icon">⚠️</span>'
-            '</div>',
-            unsafe_allow_html=True
-        )
+        status_placeholder.markdown("""
+            <div class="status-indicator status-error">
+                <span class="book-icon">⚠️</span>
+            </div>
+        """, unsafe_allow_html=True)
         msg_placeholder.empty()
         return {}
 
     for target_name in target_filenames:
-        simple_name = target_name.split("/")[-1]
-        found_path = pdf_map.get(simple_name.lower())
-
+        found_path = pdf_map.get(target_name.lower())
+        
         if found_path:
             try:
-                if found_path.stat().st_size == 0:
-                    continue
-
-                upload_success = False
+                if found_path.stat().st_size == 0: continue
+                
                 uploaded_file = None
-
+                upload_success = False
+                
                 for attempt in range(2):
                     try:
                         uploaded_file = client.files.upload(
                             file=found_path,
-                            config={"mime_type": "application/pdf"}
+                            config={'mime_type': 'application/pdf'}
                         )
                         upload_success = True
                         break
                     except Exception:
-                        if attempt == 0:
-                            time.sleep(1)
+                        if attempt == 0: time.sleep(1)
 
-                if not upload_success:
-                    continue
+                if not upload_success: continue
 
                 start_time = time.time()
                 while uploaded_file.state.name == "PROCESSING":
-                    if time.time() - start_time > 45:
-                        break
+                    if time.time() - start_time > 45: break
                     time.sleep(1)
                     uploaded_file = client.files.get(name=uploaded_file.name)
-
+                
                 if uploaded_file.state.name == "ACTIVE":
-                    lname = simple_name.lower()
-                    if "sci" in lname and "compsci" not in lname:
+                    # Categorize by subject based on filename
+                    if "sci" in target_name.lower():
                         active_files["sci"].append(uploaded_file)
-                    elif "math" in lname:
+                    elif "math" in target_name.lower():
                         active_files["math"].append(uploaded_file)
-                    elif "eng" in lname:
+                    elif "eng" in target_name.lower():
                         active_files["eng"].append(uploaded_file)
-                    elif "hindi" in lname:
-                        active_files["hindi"].append(uploaded_file)
-                    elif "french" in lname:
-                        active_files["french"].append(uploaded_file)
-                    elif "compsci" in lname:
-                        active_files["cs"].append(uploaded_file)
-
+                    
             except Exception:
                 continue
 
-    status_placeholder.markdown(
-        '<div class="status-indicator status-ready">'
-        '<span class="book-icon">📗</span>'
-        '</div>',
-        unsafe_allow_html=True
-    )
+    # 🟢 Success State
+    status_placeholder.markdown("""
+        <div class="status-indicator status-ready" title="Books Ready!">
+            <span class="book-icon">📗</span>
+        </div>
+    """, unsafe_allow_html=True)
     msg_placeholder.empty()
+        
     return active_files
 
-
 def select_relevant_books(query, file_dict):
+    """Selects relevant books based on keywords to save tokens."""
     query = query.lower()
+    
     selected = []
-
+    
+    # Keyword sets
     math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"]
     sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism"]
     eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author"]
-    hindi_keywords = ["hindi", "kavita", "kahani"]
-    french_keywords = ["french", "francais", "verb", "conjugate"]
-    cs_keywords = ["computer", "python", "coding", "algorithm", "html", "css", "compsci"]
-
+    
+    # Check for matches
     if any(k in query for k in math_keywords):
         selected.extend(file_dict.get("math", []))
     if any(k in query for k in sci_keywords):
         selected.extend(file_dict.get("sci", []))
     if any(k in query for k in eng_keywords):
         selected.extend(file_dict.get("eng", []))
-    if any(k in query for k in hindi_keywords):
-        selected.extend(file_dict.get("hindi", []))
-    if any(k in query for k in french_keywords):
-        selected.extend(file_dict.get("french", []))
-    if any(k in query for k in cs_keywords):
-        selected.extend(file_dict.get("cs", []))
-
+        
+    # Default: if no specific subject detected, use Science + Math (most common queries) 
+    # OR limit to max 3 random books to stay safe.
     if not selected:
+        # Fallback: Send all logic, but maybe just first 2 of each to avoid limit?
+        # Better strategy: Let Gemini handle general queries with limited context
+        # For now, let's send Science and Math as default (safest bet for "tutor")
         selected.extend(file_dict.get("math", []))
         selected.extend(file_dict.get("sci", []))
-
+        
     return selected
-
 
 # --- 6. ANIMATION FUNCTIONS ---
 def show_thinking_animation_rotating(placeholder):
@@ -326,57 +380,41 @@ def show_thinking_animation_rotating(placeholder):
         "📖 Helix is consulting the resources 📊"
     ]
     for message in thinking_messages:
-        placeholder.markdown(
-            '<div class="thinking-container">'
-            '<span class="thinking-text">' + message + '</span>'
-            '<div class="thinking-dots">'
-            '<div class="thinking-dot"></div>'
-            '<div class="thinking-dot"></div>'
-            '<div class="thinking-dot"></div>'
-            '</div></div>',
-            unsafe_allow_html=True
-        )
+        thinking_html = f"""
+        <div class="thinking-container">
+            <span class="thinking-text">{message}</span>
+            <div class="thinking-dots">
+                <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
+            </div>
+        </div>
+        """
+        placeholder.markdown(thinking_html, unsafe_allow_html=True)
         time.sleep(3)
 
-
 def show_thinking_animation(message="Helix is thinking"):
-    st.markdown(
-        '<div class="thinking-container">'
-        '<span class="thinking-text">' + message + '</span>'
-        '<div class="thinking-dots">'
-        '<div class="thinking-dot"></div>'
-        '<div class="thinking-dot"></div>'
-        '<div class="thinking-dot"></div>'
-        '</div></div>',
-        unsafe_allow_html=True
-    )
-
+    return st.markdown(f"""
+    <div class="thinking-container">
+        <span class="thinking-text">{message}</span>
+        <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # --- 7. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {
-            "role": "assistant",
-            "content": (
-                "👋 **Hey there! I'm Helix!**\n\n"
-                "I'm your friendly CIE tutor here to help you ace your exams! 📖\n\n"
-                "I can answer your doubts, draw diagrams, and create quizzes! 📚\n\n"
-                "**Quick Reminder:** Always mention your grade in a query!\n\n"
-                "What are we learning today?"
-            )
-        }
+        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
     ]
 
-# --- Start upload if needed ---
+# Start upload if needed
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
 else:
-    st.markdown(
-        '<div class="status-indicator status-ready">'
-        '<span class="book-icon">📗</span>'
-        '</div>',
-        unsafe_allow_html=True
-    )
+    # Persist the green icon if already loaded
+    st.markdown("""
+        <div class="status-indicator status-ready" title="Books Ready!">
+            <span class="book-icon">📗</span>
+        </div>
+    """, unsafe_allow_html=True)
 
 # --- 8. DISPLAY CHAT ---
 for message in st.session_state.messages:
@@ -394,74 +432,53 @@ if prompt := st.chat_input("Ask Helix a question..."):
     with st.chat_message("assistant"):
         thinking_placeholder = st.empty()
         show_thinking_animation_rotating(thinking_placeholder)
-
+        
         try:
-            # 1. Select relevant books
+            # 1. Select RELEVANT books only
             relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
-
-            # 2. Build contents correctly to avoid Part.from_text() error
-            parts = []
-            for f in relevant_books:
-                parts.append(types.Part.from_uri(file_uri=f.uri, mime_type="application/pdf"))
-            parts.append(types.Part.from_text(text=prompt))
-
-            user_content = types.Content(role="user", parts=parts)
-
-            # 3. Generate response
+            
+            # 2. Generate
             text_response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=[user_content],
+                model="gemini-2.5-flash", 
+                contents=relevant_books + [prompt],
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
                     tools=[{"google_search": {}}]
                 )
             )
-
+            
             bot_text = text_response.text
             thinking_placeholder.empty()
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # 4. Image Gen (Pollinations.ai - Free & Reliable)
+            # 3. Image Gen
             if "IMAGE_GEN:" in bot_text:
-                import requests
-                from io import BytesIO
-
-                img_thinking = st.empty()
                 try:
                     img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
-                    img_desc = img_desc.replace("[", "").replace("]", "")
-
-                    with img_thinking:
-                        show_thinking_animation("🖌️ Painting diagram...")
-
-                    encoded_desc = requests.utils.quote(img_desc)
-                    image_url = f"https://image.pollinations.ai/prompt/{encoded_desc}?nologo=true"
-
-                    response = requests.get(image_url, timeout=30)
-                    if response.status_code == 200:
-                        image_bytes = BytesIO(response.content)
-                        img_thinking.empty()
-                        st.image(image_bytes, caption=f"Generated: {img_desc}")
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": image_bytes,
-                            "is_image": True
-                        })
-                    else:
-                        img_thinking.empty()
-                        st.error("Image generation service busy. Try again.")
-
-                except Exception as e:
-                    img_thinking.empty()
-                    st.error(f"Image generation failed: {e}")
+                    img_thinking = st.empty()
+                    with img_thinking: show_thinking_animation("🖌️ Painting diagram...")
+                    
+                    img_resp = client.models.generate_content(
+                        model="gemini-3-pro-image-preview",
+                        contents=[img_desc],
+                        config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
+                    )
+                    
+                    for part in img_resp.parts:
+                        if part.inline_data:
+                            st.image(part.inline_data.data, caption="Generated by Helix")
+                            st.session_state.messages.append({"role": "assistant", "content": part.inline_data.data, "is_image": True})
+                            img_thinking.empty()
+                except Exception:
+                    st.error("Image generation failed.")
 
         except Exception as e:
             thinking_placeholder.empty()
             st.error(f"Helix Error: {e}")
             if "403" in str(e):
-                st.warning("⚠️ Session expired. Refresh the page.")
+                st.warning("⚠️ Session expired. Refresh page.")
             elif "429" in str(e):
                 st.warning("⚠️ Too many requests. Please wait a moment.")
             elif "400" in str(e):
-                st.warning("⚠️ Query too complex. Try asking about a specific subject.")
+                st.warning("⚠️ Query too complex. Try asking about a specific subject (Math, Science, or English).")
