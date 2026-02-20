@@ -234,7 +234,7 @@ Chapter 7 • Testing your skills
 If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist/mathematician/writer terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
 """
 
-# --- 5. ROBUST FILE UPLOADER ---
+# --- 5. ROBUST FILE UPLOADER & SMART SELECTOR ---
 def upload_textbooks():
     target_filenames = [
         "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
@@ -244,7 +244,8 @@ def upload_textbooks():
         "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
     ]
     
-    active_files = []
+    # Store files in a dict by subject for smart retrieval
+    active_files = {"sci": [], "math": [], "eng": []}
     
     # 🔴 Initial Loading State (Icon)
     status_placeholder = st.empty()
@@ -255,10 +256,229 @@ def upload_textbooks():
         </div>
         """, unsafe_allow_html=True)
 
-    # 💬 POP-UP MESSAGE (ANIMATED)
+    # 💬 POP-UP MESSAGE
     msg_placeholder = st.empty()
     with msg_placeholder.chat_message("assistant"):
         st.markdown(f"""
         <div class="thinking-container">
             <span class="thinking-text">🔄 Helix is loading your textbooks...</span>
-            <div class="thinking-dots"><div class
+            <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    try:
+        cwd = Path.cwd()
+        all_pdfs = list(cwd.rglob("*.pdf"))
+        if len(all_pdfs) == 0:
+            status_placeholder.markdown("""
+                <div class="status-indicator status-error" title="No PDFs Found">
+                    <span class="book-icon">⚠️</span>
+                </div>
+            """, unsafe_allow_html=True)
+            msg_placeholder.empty()
+            return {}
+            
+        pdf_map = {p.name.lower(): p for p in all_pdfs}
+            
+    except Exception:
+        status_placeholder.markdown("""
+            <div class="status-indicator status-error">
+                <span class="book-icon">⚠️</span>
+            </div>
+        """, unsafe_allow_html=True)
+        msg_placeholder.empty()
+        return {}
+
+    for target_name in target_filenames:
+        found_path = pdf_map.get(target_name.lower())
+        
+        if found_path:
+            try:
+                if found_path.stat().st_size == 0: continue
+                
+                uploaded_file = None
+                upload_success = False
+                
+                for attempt in range(2):
+                    try:
+                        uploaded_file = client.files.upload(
+                            file=found_path,
+                            config={'mime_type': 'application/pdf'}
+                        )
+                        upload_success = True
+                        break
+                    except Exception:
+                        if attempt == 0: time.sleep(1)
+
+                if not upload_success: continue
+
+                start_time = time.time()
+                while uploaded_file.state.name == "PROCESSING":
+                    if time.time() - start_time > 45: break
+                    time.sleep(1)
+                    uploaded_file = client.files.get(name=uploaded_file.name)
+                
+                if uploaded_file.state.name == "ACTIVE":
+                    # Categorize by subject based on filename
+                    if "sci" in target_name.lower():
+                        active_files["sci"].append(uploaded_file)
+                    elif "math" in target_name.lower():
+                        active_files["math"].append(uploaded_file)
+                    elif "eng" in target_name.lower():
+                        active_files["eng"].append(uploaded_file)
+                    
+            except Exception:
+                continue
+
+    # 🟢 Success State
+    status_placeholder.markdown("""
+        <div class="status-indicator status-ready" title="Books Ready!">
+            <span class="book-icon">📗</span>
+        </div>
+    """, unsafe_allow_html=True)
+    msg_placeholder.empty()
+        
+    return active_files
+
+def select_relevant_books(query, file_dict):
+    """Selects relevant books based on keywords to save tokens."""
+    query = query.lower()
+    
+    selected = []
+    
+    # Keyword sets
+    math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"]
+    sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism"]
+    eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author"]
+    
+    # Check for matches
+    if any(k in query for k in math_keywords):
+        selected.extend(file_dict.get("math", []))
+    if any(k in query for k in sci_keywords):
+        selected.extend(file_dict.get("sci", []))
+    if any(k in query for k in eng_keywords):
+        selected.extend(file_dict.get("eng", []))
+        
+    # Default: if no specific subject detected, use Science + Math (most common queries) 
+    # OR limit to max 3 random books to stay safe.
+    if not selected:
+        # Fallback: Send all logic, but maybe just first 2 of each to avoid limit?
+        # Better strategy: Let Gemini handle general queries with limited context
+        # For now, let's send Science and Math as default (safest bet for "tutor")
+        selected.extend(file_dict.get("math", []))
+        selected.extend(file_dict.get("sci", []))
+        
+    return selected
+
+# --- 6. ANIMATION FUNCTIONS ---
+def show_thinking_animation_rotating(placeholder):
+    thinking_messages = [
+        "🔍 Helix is searching the textbooks 📚",
+        "🧠 Helix is analyzing your question 💭",
+        "✨ Helix is forming your answer 📝",
+        "🔬 Helix is processing information 🧪",
+        "📖 Helix is consulting the resources 📊"
+    ]
+    for message in thinking_messages:
+        thinking_html = f"""
+        <div class="thinking-container">
+            <span class="thinking-text">{message}</span>
+            <div class="thinking-dots">
+                <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
+            </div>
+        </div>
+        """
+        placeholder.markdown(thinking_html, unsafe_allow_html=True)
+        time.sleep(3)
+
+def show_thinking_animation(message="Helix is thinking"):
+    return st.markdown(f"""
+    <div class="thinking-container">
+        <span class="thinking-text">{message}</span>
+        <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- 7. INITIALIZE SESSION ---
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
+    ]
+
+# Start upload if needed
+if "textbook_handles" not in st.session_state:
+    st.session_state.textbook_handles = upload_textbooks()
+else:
+    # Persist the green icon if already loaded
+    st.markdown("""
+        <div class="status-indicator status-ready" title="Books Ready!">
+            <span class="book-icon">📗</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+# --- 8. DISPLAY CHAT ---
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        if message.get("is_image"):
+            st.image(message["content"])
+        else:
+            st.markdown(message["content"])
+
+# --- 9. MAIN LOOP ---
+if prompt := st.chat_input("Ask Helix a question..."):
+    st.chat_message("user").markdown(prompt)
+    st.session_state.messages.append({"role": "user", "content": prompt})
+
+    with st.chat_message("assistant"):
+        thinking_placeholder = st.empty()
+        show_thinking_animation_rotating(thinking_placeholder)
+        
+        try:
+            # 1. Select RELEVANT books only
+            relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
+            
+            # 2. Generate
+            text_response = client.models.generate_content(
+                model="gemini-2.5-flash", 
+                contents=relevant_books + [prompt],
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    tools=[{"google_search": {}}]
+                )
+            )
+            
+            bot_text = text_response.text
+            thinking_placeholder.empty()
+            st.markdown(bot_text)
+            st.session_state.messages.append({"role": "assistant", "content": bot_text})
+
+            # 3. Image Gen
+            if "IMAGE_GEN:" in bot_text:
+                try:
+                    img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
+                    img_thinking = st.empty()
+                    with img_thinking: show_thinking_animation("🖌️ Painting diagram...")
+                    
+                    img_resp = client.models.generate_content(
+                        model="gemini-3-pro-image-preview",
+                        contents=[img_desc],
+                        config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
+                    )
+                    
+                    for part in img_resp.parts:
+                        if part.inline_data:
+                            st.image(part.inline_data.data, caption="Generated by Helix")
+                            st.session_state.messages.append({"role": "assistant", "content": part.inline_data.data, "is_image": True})
+                            img_thinking.empty()
+                except Exception:
+                    st.error("Image generation failed.")
+
+        except Exception as e:
+            thinking_placeholder.empty()
+            st.error(f"Helix Error: {e}")
+            if "403" in str(e):
+                st.warning("⚠️ Session expired. Refresh page.")
+            elif "429" in str(e):
+                st.warning("⚠️ Too many requests. Please wait a moment.")
+            elif "400" in str(e):
+                st.warning("⚠️ Query too complex. Try asking about a specific subject (Math, Science, or English).")
