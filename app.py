@@ -244,7 +244,7 @@ def upload_textbooks():
         "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
     ]
     
-    # Store files in a dict by subject for smart retrieval
+    # Store files in a dict by subject for smart retrieval (you still keep this structure)
     active_files = {"sci": [], "math": [], "eng": []}
     
     # 🔴 Initial Loading State (Icon)
@@ -294,7 +294,8 @@ def upload_textbooks():
         
         if found_path:
             try:
-                if found_path.stat().st_size == 0: continue
+                if found_path.stat().st_size == 0:
+                    continue
                 
                 uploaded_file = None
                 upload_success = False
@@ -308,13 +309,16 @@ def upload_textbooks():
                         upload_success = True
                         break
                     except Exception:
-                        if attempt == 0: time.sleep(1)
+                        if attempt == 0:
+                            time.sleep(1)
 
-                if not upload_success: continue
+                if not upload_success:
+                    continue
 
                 start_time = time.time()
                 while uploaded_file.state.name == "PROCESSING":
-                    if time.time() - start_time > 45: break
+                    if time.time() - start_time > 45:
+                        break
                     time.sleep(1)
                     uploaded_file = client.files.get(name=uploaded_file.name)
                 
@@ -340,35 +344,12 @@ def upload_textbooks():
         
     return active_files
 
-def select_relevant_books(query, file_dict):
-    """Selects relevant books based on keywords to save tokens."""
-    query = query.lower()
-    
-    selected = []
-    
-    # Keyword sets
-    math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"]
-    sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism"]
-    eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author"]
-    
-    # Check for matches
-    if any(k in query for k in math_keywords):
-        selected.extend(file_dict.get("math", []))
-    if any(k in query for k in sci_keywords):
-        selected.extend(file_dict.get("sci", []))
-    if any(k in query for k in eng_keywords):
-        selected.extend(file_dict.get("eng", []))
-        
-    # Default: if no specific subject detected, use Science + Math (most common queries) 
-    # OR limit to max 3 random books to stay safe.
-    if not selected:
-        # Fallback: Send all logic, but maybe just first 2 of each to avoid limit?
-        # Better strategy: Let Gemini handle general queries with limited context
-        # For now, let's send Science and Math as default (safest bet for "tutor")
-        selected.extend(file_dict.get("math", []))
-        selected.extend(file_dict.get("sci", []))
-        
-    return selected
+def get_all_books(file_dict):
+    """Flatten all uploaded textbooks into a single list."""
+    all_files = []
+    for subject_files in file_dict.values():
+        all_files.extend(subject_files)
+    return all_files
 
 # --- 6. ANIMATION FUNCTIONS ---
 def show_thinking_animation_rotating(placeholder):
@@ -434,17 +415,28 @@ if prompt := st.chat_input("Ask Helix a question..."):
         show_thinking_animation_rotating(thinking_placeholder)
         
         try:
-            # 1. Select RELEVANT books only
-            relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
-            
-            # 2. Generate
+            # 1. Use ALL books (flatten dictionary)
+            all_books = get_all_books(st.session_state.textbook_handles)
+
+            # 2. Build Parts for each uploaded file (Gemini Files API)
+            # You can pass the uploaded file objects directly as parts.[web:16][web:26]
+            file_parts = [types.Part.from_uri(file_uri=f.uri, mime_type=f.mime_type or "application/pdf")
+                          for f in all_books]
+
+            # 3. Single user Content containing all files + the text prompt.[web:15][web:19]
+            user_content = types.Content(
+                role="user",
+                parts=file_parts + [types.Part.from_text(prompt)],
+            )
+
+            # 4. Generate
             text_response = client.models.generate_content(
-                model="gemini-2.5-flash", 
-                contents=relevant_books + [prompt],
+                model="gemini-2.5-flash",
+                contents=[user_content],
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
-                    tools=[{"google_search": {}}]
-                )
+                    tools=[{"google_search": {}}],
+                ),
             )
             
             bot_text = text_response.text
@@ -452,12 +444,13 @@ if prompt := st.chat_input("Ask Helix a question..."):
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # 3. Image Gen
+            # 5. Image Gen
             if "IMAGE_GEN:" in bot_text:
                 try:
                     img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                     img_thinking = st.empty()
-                    with img_thinking: show_thinking_animation("🖌️ Painting diagram...")
+                    with img_thinking:
+                        show_thinking_animation("🖌️ Painting diagram...")
                     
                     img_resp = client.models.generate_content(
                         model="gemini-3-pro-image-preview",
@@ -466,9 +459,11 @@ if prompt := st.chat_input("Ask Helix a question..."):
                     )
                     
                     for part in img_resp.parts:
-                        if part.inline_data:
+                        if getattr(part, "inline_data", None):
                             st.image(part.inline_data.data, caption="Generated by Helix")
-                            st.session_state.messages.append({"role": "assistant", "content": part.inline_data.data, "is_image": True})
+                            st.session_state.messages.append(
+                                {"role": "assistant", "content": part.inline_data.data, "is_image": True}
+                            )
                             img_thinking.empty()
                 except Exception:
                     st.error("Image generation failed.")
@@ -481,4 +476,4 @@ if prompt := st.chat_input("Ask Helix a question..."):
             elif "429" in str(e):
                 st.warning("⚠️ Too many requests. Please wait a moment.")
             elif "400" in str(e):
-                st.warning("⚠️ Query too complex. Try asking about a specific subject (Math, Science, or English).")
+                st.warning("⚠️ Query too complex or files too heavy in one go. Try asking about a specific subject (Math, Science, or English), or reduce the number of PDFs.")
