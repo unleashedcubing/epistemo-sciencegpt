@@ -1,8 +1,14 @@
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
 import streamlit as st
 import os
 import time
 import re
+import uuid
 import shutil
+import random
 from pathlib import Path
 
 from google import genai
@@ -12,6 +18,20 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+# --- 0. HARD RESET SCRIPT (FIXES INTERNAL ERROR) ---
+# If you are still getting the Chroma crash, uncomment the line below, run it ONCE, 
+# wait for it to say "WIPED", then comment it back out.
+def hard_reset_chroma():
+    persist_dir = "./helix_chroma_db"
+    if os.path.exists(persist_dir):
+        shutil.rmtree(persist_dir)
+        st.cache_resource.clear()
+        st.error("🚨 CORRUPTED DATABASE WIPED. PLEASE REFRESH THE PAGE NOW.")
+        st.stop()
+
+# UNCOMMENT THIS LINE ONLY IF IT IS STILL CRASHING, THEN RE-COMMENT IT:
+# hard_reset_chroma() 
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
@@ -62,30 +82,22 @@ st.markdown("""
   transition: all 0.3s ease;
 }
 
-.book-icon {
-  font-size: 24px;
-}
+.book-icon { font-size: 24px; }
 
 /* Loading Spinner */
 .spinner {
-  width: 18px;
-  height: 18px;
+  width: 18px; height: 18px;
   border: 3px solid rgba(255, 255, 255, 0.3);
-  border-radius: 50%;
-  border-top-color: #00d4ff;
+  border-radius: 50%; border-top-color: #00d4ff;
   animation: spin 1s ease-in-out infinite;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Status Colors */
 .status-loading { border-color: #ff4b4b; }
 .status-loading .book-icon { animation: pulse-red 1.5s infinite; }
-
 .status-ready { border-color: #00c04b; background-color: rgba(0, 192, 75, 0.15); }
-
 .status-error { border-color: #ffa500; }
 
 @keyframes pulse-red {
@@ -96,13 +108,8 @@ st.markdown("""
 
 /* Title Styles */
 .big-title {
-  font-family: 'Inter', sans-serif;
-  color: #00d4ff;
-  text-align: center;
-  font-size: 48px;
-  font-weight: 1200;
-  letter-spacing: -3px;
-  margin-bottom: 0px;
+  font-family: 'Inter', sans-serif; color: #00d4ff; text-align: center;
+  font-size: 48px; font-weight: 1200; letter-spacing: -3px; margin-bottom: 0px;
   text-shadow: 0 0 6px rgba(0, 212, 255, 0.55);
   animation: helix-glow 2.2s ease-in-out infinite;
 }
@@ -110,28 +117,15 @@ st.markdown("""
   0%, 100% { text-shadow: 0 0 6px rgba(0, 212, 255, 0.45); }
   50% { text-shadow: 0 0 8px rgba(0, 212, 255, 0.75); }
 }
-.subtitle {
-  text-align: center;
-  color: var(--text-color);
-  opacity: 0.60;
-  font-size: 18px;
-  margin-bottom: 30px;
-}
+.subtitle { text-align: center; color: var(--text-color); opacity: 0.60; font-size: 18px; margin-bottom: 30px; }
 .thinking-container {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  background-color: var(--secondary-background-color);
-  border-radius: 8px;
-  margin: 10px 0;
-  border-left: 3px solid #fc8404;
+  display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+  background-color: var(--secondary-background-color); border-radius: 8px; margin: 10px 0; border-left: 3px solid #fc8404;
 }
 .thinking-text { color: #fc8404; font-size: 14px; font-weight: 600; }
 .thinking-dots { display: flex; gap: 4px; }
 .thinking-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background-color: #fc8404;
+  width: 6px; height: 6px; border-radius: 50%; background-color: #fc8404;
   animation: thinking-pulse 1.4s ease-in-out infinite;
 }
 .thinking-dot:nth-child(1){ animation-delay: 0s; }
@@ -147,17 +141,6 @@ st.markdown("""
 <div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
 """, unsafe_allow_html=True)
 
-# --- EMERGENCY DATABASE RESET BUTTON ---
-with st.sidebar:
-    st.warning("⚠️ Admin Tools")
-    if st.button("Reset Database (Fix 'I can't find this' error)"):
-        persist_dir = "./helix_chroma_db"
-        if os.path.exists(persist_dir):
-            shutil.rmtree(persist_dir)  
-            st.cache_resource.clear()   
-            st.success("Database deleted! Please refresh the web page.")
-        else:
-            st.info("Database doesn't exist yet.")
 
 # --- 4. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
@@ -393,26 +376,23 @@ if vectordb:
         </div>
     """, unsafe_allow_html=True)
 
-# --- 8. ANIMATION FUNCTIONS ---
+# --- 8. ANIMATION FUNCTIONS (FIXED 15-SEC DELAY) ---
 def show_thinking_animation_rotating(placeholder):
-    thinking_messages = [
+    messages = [
         "🔍 Helix is searching the textbooks 📚",
         "🧠 Helix is analyzing your question 💭",
         "✨ Helix is forming your answer 📝",
-        "🔬 Helix is processing information 🧪",
-        "📖 Helix is consulting the resources 📊"
+        "🔬 Helix is processing information 🧪"
     ]
-    for message in thinking_messages:
-        thinking_html = f"""
-        <div class="thinking-container">
-            <span class="thinking-text">{message}</span>
-            <div class="thinking-dots">
-                <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
-            </div>
+    thinking_html = f"""
+    <div class="thinking-container">
+        <span class="thinking-text">{random.choice(messages)}</span>
+        <div class="thinking-dots">
+            <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
         </div>
-        """
-        placeholder.markdown(thinking_html, unsafe_allow_html=True)
-        time.sleep(3)
+    </div>
+    """
+    placeholder.markdown(thinking_html, unsafe_allow_html=True)
 
 def show_thinking_animation(message="Helix is thinking"):
     return st.markdown(f"""
