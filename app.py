@@ -2,7 +2,6 @@ import streamlit as st
 import os
 import time
 import re
-import uuid
 import shutil
 from pathlib import Path
 
@@ -13,8 +12,6 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
-from streamlit_cookies_controller import CookieController
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
@@ -150,14 +147,14 @@ st.markdown("""
 <div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
 """, unsafe_allow_html=True)
 
-# --- NEW: EMERGENCY DATABASE RESET BUTTON ---
+# --- EMERGENCY DATABASE RESET BUTTON ---
 with st.sidebar:
     st.warning("⚠️ Admin Tools")
     if st.button("Reset Database (Fix 'I can't find this' error)"):
         persist_dir = "./helix_chroma_db"
         if os.path.exists(persist_dir):
-            shutil.rmtree(persist_dir)  # Deletes the folder on the Cloud server!
-            st.cache_resource.clear()   # Clears Streamlit's cache
+            shutil.rmtree(persist_dir)  
+            st.cache_resource.clear()   
             st.success("Database deleted! Please refresh the web page.")
         else:
             st.info("Database doesn't exist yet.")
@@ -279,17 +276,11 @@ def infer_subject(query: str):
 
 def infer_stage(query: str):
     q = query.lower()
-    
-    # Matches "stage 7", "7th stage", etc.
     m_stage = re.search(r"\bstage\s*([789])\b|\b([789])(?:th)?\s*stage\b", q)
-    if m_stage: 
-        return int(m_stage.group(1) or m_stage.group(2))
+    if m_stage: return int(m_stage.group(1) or m_stage.group(2))
         
-    # Matches "grade 7", "7th grade", "year 7", etc.
     m_grade = re.search(r"\b(?:grade|year)\s*([678])\b|\b([678])(?:th)?\s*(?:grade|year)\b", q)
-    if m_grade: 
-        # Grade 7 = Stage 8 in Cambridge
-        return int(m_grade.group(1) or m_grade.group(2)) + 1
+    if m_grade: return int(m_grade.group(1) or m_grade.group(2)) + 1
         
     return None
 
@@ -355,8 +346,7 @@ def get_vector_db():
     documents = []
     for target in TARGET_FILENAMES:
         p = pdf_map.get(target.lower())
-        if not p:
-            continue
+        if not p: continue
         try:
             loader = PyPDFLoader(str(p))
             docs = loader.load()
@@ -432,19 +422,9 @@ def show_thinking_animation(message="Helix is thinking"):
     </div>
     """, unsafe_allow_html=True)
 
-# --- 9. COOKIE-BASED SESSION KEY ---
-controller = CookieController()
-session_id = controller.get("helix_session_id")
-if not session_id:
-    session_id = str(uuid.uuid4())
-    controller.set("helix_session_id", session_id)
-    time.sleep(0.2)
-
-MESSAGES_KEY = f"messages_{session_id}"
-
-# --- 10. INITIALIZE SESSION ---
-if MESSAGES_KEY not in st.session_state:
-    st.session_state[MESSAGES_KEY] = [
+# --- 10. INITIALIZE NATIVE SESSION STATE ---
+if "messages" not in st.session_state:
+    st.session_state.messages = [
         {"role": "assistant", "content":
             "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\n"
             "I can answer your doubts, draw diagrams, and create quizes! 📚\n\n"
@@ -455,7 +435,7 @@ if MESSAGES_KEY not in st.session_state:
     ]
 
 # --- 11. DISPLAY CHAT ---
-for message in st.session_state[MESSAGES_KEY]:
+for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
             st.image(message["content"])
@@ -473,57 +453,42 @@ def get_last_n_messages_for_model(messages, n=8):
 
 # --- 13. RAG RETRIEVAL WITH METADATA FILTERS ---
 def retrieve_rag_context(query: str, k: int = 8):
-    if not vectordb:
-        return "", []
+    if not vectordb: return "", []
 
     subj = infer_subject(query)
     stage = infer_stage(query)
 
-    # Special rule: No textbook available for Stage 9 English
-    if subj == "eng" and stage == 9:
-        return "", []
+    if subj == "eng" and stage == 9: return "", []
 
-    # Build strict exact filter dictionary for Chroma
     search_filter = {}
-    if subj:
-        search_filter["subject"] = subj
-    if stage:
-        search_filter["stage"] = stage
+    if subj: search_filter["subject"] = subj
+    if stage: search_filter["stage"] = stage
 
     final_docs = []
     if search_filter:
         try:
-            # Chroma requires complex $and filters if there are multiple keys
             if len(search_filter) > 1:
                 filter_dict = {"$and": [{k: v} for k, v in search_filter.items()]}
             else:
                 filter_dict = search_filter
-                
             final_docs = vectordb.similarity_search(query, k=k, filter=filter_dict)
         except Exception:
-            # Fallback if there's an issue with the filter format
             final_docs = vectordb.similarity_search(query, k=k)
     else:
-        # If no specific subject/grade is mentioned, search all books
         final_docs = vectordb.similarity_search(query, k=k)
 
     lines = []
     for i, d in enumerate(final_docs, 1):
         src = d.metadata.get("filename") or d.metadata.get("source", "Unknown")
         page = d.metadata.get("page", "Unknown")
-        lines.append(
-            f"Source {i}\n"
-            f"File: {src}\n"
-            f"Page: {page}\n"
-            f"Content:\n{d.page_content}"
-        )
+        lines.append(f"Source {i}\nFile: {src}\nPage: {page}\nContent:\n{d.page_content}")
 
     return "\n\n".join(lines), final_docs
 
 # --- 14. MAIN LOOP ---
 if prompt := st.chat_input("Ask Helix a question..."):
     st.chat_message("user").markdown(prompt)
-    st.session_state[MESSAGES_KEY].append({"role": "user", "content": prompt})
+    st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
         thinking_placeholder = st.empty()
@@ -531,16 +496,12 @@ if prompt := st.chat_input("Ask Helix a question..."):
 
         try:
             rag_context, _docs = retrieve_rag_context(prompt, k=8)
-            chat_history_contents = get_last_n_messages_for_model(st.session_state[MESSAGES_KEY][:-1], n=8)
+            chat_history_contents = get_last_n_messages_for_model(st.session_state.messages[:-1], n=8)
 
-            # --- DEBUG EXPANDER: Let's you see exactly what the AI is reading! ---
             with st.expander("🔍 See what textbook pages Helix read for this question"):
-                if rag_context.strip():
-                    st.text(rag_context)
-                else:
-                    st.warning("No context retrieved. Database might be empty or missing.")
+                if rag_context.strip(): st.text(rag_context)
+                else: st.warning("No context retrieved. Database might be empty or missing.")
 
-            # Augmented prompt: Softened slightly so it isn't overly strict
             augmented_prompt = f"""
 You are Helix, a helpful tutor. You are answering a student based on textbook excerpts.
 
@@ -557,45 +518,33 @@ Question:
 {prompt}
 """.strip()
 
-            current_content = types.Content(
-                role="user",
-                parts=[types.Part.from_text(text=augmented_prompt)]
-            )
+            current_content = types.Content(role="user", parts=[types.Part.from_text(text=augmented_prompt)])
 
-            # Generate (NO Google Search tools = Offline memory only)
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=chat_history_contents + [current_content],
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION
-                )
+                config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
             )
 
             bot_text = text_response.text
             thinking_placeholder.empty()
             st.markdown(bot_text)
-            st.session_state[MESSAGES_KEY].append({"role": "assistant", "content": bot_text})
+            st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # Image Gen
             if "IMAGE_GEN:" in bot_text:
                 try:
                     img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                     img_thinking = st.empty()
-                    with img_thinking:
-                        show_thinking_animation("🖌️ Painting diagram...")
-
+                    with img_thinking: show_thinking_animation("🖌️ Painting diagram...")
                     img_resp = client.models.generate_content(
                         model="gemini-3-pro-image-preview",
                         contents=[img_desc],
                         config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
                     )
-
                     for part in img_resp.parts:
                         if part.inline_data:
                             st.image(part.inline_data.data, caption="Generated by Helix")
-                            st.session_state[MESSAGES_KEY].append(
-                                {"role": "assistant", "content": part.inline_data.data, "is_image": True}
-                            )
+                            st.session_state.messages.append({"role": "assistant", "content": part.inline_data.data, "is_image": True})
                             img_thinking.empty()
                 except Exception:
                     st.error("Image generation failed.")
@@ -603,7 +552,4 @@ Question:
         except Exception as e:
             thinking_placeholder.empty()
             st.error(f"Helix Error: {e}")
-            if "403" in str(e):
-                st.warning("⚠️ Session expired. Refresh page.")
-            elif "429" in str(e):
-                st.warning("⚠️ Too many requests. Please wait a moment.")
+
