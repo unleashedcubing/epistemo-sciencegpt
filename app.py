@@ -244,7 +244,6 @@ def upload_textbooks():
         "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
     ]
     
-    # Store files in a dict by subject for smart retrieval
     active_files = {"sci": [], "math": [], "eng": []}
     
     # 🔴 Initial Loading State (Icon)
@@ -319,7 +318,6 @@ def upload_textbooks():
                     uploaded_file = client.files.get(name=uploaded_file.name)
                 
                 if uploaded_file.state.name == "ACTIVE":
-                    # Categorize by subject based on filename
                     if "sci" in target_name.lower():
                         active_files["sci"].append(uploaded_file)
                     elif "math" in target_name.lower():
@@ -343,15 +341,12 @@ def upload_textbooks():
 def select_relevant_books(query, file_dict):
     """Selects relevant books based on keywords to save tokens."""
     query = query.lower()
-    
     selected = []
     
-    # Keyword sets
     math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"]
     sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism"]
     eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author"]
     
-    # Check for matches
     if any(k in query for k in math_keywords):
         selected.extend(file_dict.get("math", []))
     if any(k in query for k in sci_keywords):
@@ -359,12 +354,7 @@ def select_relevant_books(query, file_dict):
     if any(k in query for k in eng_keywords):
         selected.extend(file_dict.get("eng", []))
         
-    # Default: if no specific subject detected, use Science + Math (most common queries) 
-    # OR limit to max 3 random books to stay safe.
     if not selected:
-        # Fallback: Send all logic, but maybe just first 2 of each to avoid limit?
-        # Better strategy: Let Gemini handle general queries with limited context
-        # For now, let's send Science and Math as default (safest bet for "tutor")
         selected.extend(file_dict.get("math", []))
         selected.extend(file_dict.get("sci", []))
         
@@ -399,10 +389,45 @@ def show_thinking_animation(message="Helix is thinking"):
     </div>
     """, unsafe_allow_html=True)
 
+
+# --- NEW: FORMAT HISTORY FOR GOOGLE GENAI SDK ---
+def get_recent_history_contents(messages, max_messages=8):
+    """
+    Grabs up to the last `max_messages` from Streamlit session state
+    and formats them as types.Content objects so Gemini has chat context.
+    Filters out any image generation messages or the initial greeting.
+    """
+    history_contents = []
+    
+    # Exclude system messages or images, just grab raw text turns
+    text_msgs = [m for m in messages if not m.get("is_image") and not m.get("is_greeting")]
+    
+    # Grab the last N messages
+    recent_msgs = text_msgs[-max_messages:]
+    
+    for msg in recent_msgs:
+        # Map Streamlit roles to GenAI roles
+        role = "user" if msg["role"] == "user" else "model"
+        
+        # Build the structured Content object
+        history_contents.append(
+            types.Content(
+                role=role,
+                parts=[types.Part.from_text(text=msg["content"])]
+            )
+        )
+        
+    return history_contents
+
+
 # --- 7. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
-        {"role": "assistant", "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?"}
+        {
+            "role": "assistant", 
+            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?",
+            "is_greeting": True
+        }
     ]
 
 # Start upload if needed
@@ -434,13 +459,32 @@ if prompt := st.chat_input("Ask Helix a question..."):
         show_thinking_animation_rotating(thinking_placeholder)
         
         try:
-            # 1. Select RELEVANT books only
+            # 1. Gather relevant file handles
             relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
             
-            # 2. Generate
+            # 2. Get past chat context natively formatted for GenAI
+            chat_history_contents = get_recent_history_contents(st.session_state.messages[:-1], max_messages=8)
+            
+            # 3. Create the *current* user prompt content object
+            # We bundle the PDFs with the user prompt in the final Content array
+            current_prompt_parts = []
+            for book in relevant_books:
+                current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type=book.mime_type))
+            
+            current_prompt_parts.append(types.Part.from_text(text=prompt))
+            
+            current_content = types.Content(
+                role="user",
+                parts=current_prompt_parts
+            )
+            
+            # Combine history with current query
+            full_contents = chat_history_contents + [current_content]
+
+            # 4. Generate
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash", 
-                contents=relevant_books + [prompt],
+                contents=full_contents,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
                     tools=[{"google_search": {}}]
@@ -452,7 +496,7 @@ if prompt := st.chat_input("Ask Helix a question..."):
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # 3. Image Gen
+            # 5. Image Gen (Unchanged)
             if "IMAGE_GEN:" in bot_text:
                 try:
                     img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
