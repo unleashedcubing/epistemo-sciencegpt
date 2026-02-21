@@ -1,3 +1,8 @@
 streamlit
 google-genai
-Pillow
+langchain-community
+langchain-text-splitters
+chromadb
+pypdf
+streamlit-cookies-controller
+langchain-google-genai
