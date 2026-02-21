@@ -1,14 +1,30 @@
 import streamlit as st
 import os
 import time
+import uuid
 from pathlib import Path
+
+# Google GenAI imports
 from google import genai
 from google.genai import types
+
+# RAG / Langchain imports
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import Chroma
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
+
+# Cookie imports for persistent state
+from streamlit_cookies_controller import CookieController
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 
-# --- 2. API CLIENT SETUP ---
+# --- 2. COOKIE CONTROLLER INIT ---
+# Must be instantiated near the top of the script
+controller = CookieController()
+
+# --- 3. API CLIENT SETUP ---
 api_key = os.environ.get("GOOGLE_API_KEY")
 if not api_key:
     if "GOOGLE_API_KEY" in st.secrets:
@@ -23,7 +39,7 @@ except Exception as e:
     st.error(f"🚨 Failed to initialize Gemini Client: {e}")
     st.stop()
 
-# --- 3. THEME CSS & STATUS INDICATOR ---
+# --- 4. THEME CSS & STATUS INDICATOR ---
 st.markdown("""
 <style>
 /* Theme-aware app background */
@@ -35,8 +51,6 @@ st.markdown("""
     var(--background-color);
   color: var(--text-color);
 }
-
-/* Status Indicator (Top Left - Moved Down) */
 .status-indicator {
   position: fixed;
   top: 60px;
@@ -53,48 +67,27 @@ st.markdown("""
   border: 1px solid rgba(255,255,255,0.1);
   transition: all 0.3s ease;
 }
-
-.book-icon {
-  font-size: 24px;
-}
-
-/* Loading Spinner */
+.book-icon { font-size: 24px; }
 .spinner {
-  width: 18px;
-  height: 18px;
+  width: 18px; height: 18px;
   border: 3px solid rgba(255, 255, 255, 0.3);
   border-radius: 50%;
   border-top-color: #00d4ff;
   animation: spin 1s ease-in-out infinite;
 }
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* Status Colors */
+@keyframes spin { to { transform: rotate(360deg); } }
 .status-loading { border-color: #ff4b4b; }
 .status-loading .book-icon { animation: pulse-red 1.5s infinite; }
-
 .status-ready { border-color: #00c04b; background-color: rgba(0, 192, 75, 0.15); }
-
 .status-error { border-color: #ffa500; }
-
 @keyframes pulse-red {
   0% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.1); opacity: 0.7; }
   100% { transform: scale(1); opacity: 1; }
 }
-
-/* Title Styles */
 .big-title {
-  font-family: 'Inter', sans-serif;
-  color: #00d4ff;
-  text-align: center;
-  font-size: 48px;
-  font-weight: 1200;
-  letter-spacing: -3px;
-  margin-bottom: 0px;
+  font-family: 'Inter', sans-serif; color: #00d4ff; text-align: center;
+  font-size: 48px; font-weight: 1200; letter-spacing: -3px; margin-bottom: 0px;
   text-shadow: 0 0 6px rgba(0, 212, 255, 0.55);
   animation: helix-glow 2.2s ease-in-out infinite;
 }
@@ -102,28 +95,15 @@ st.markdown("""
   0%, 100% { text-shadow: 0 0 6px rgba(0, 212, 255, 0.45); }
   50% { text-shadow: 0 0 8px rgba(0, 212, 255, 0.75); }
 }
-.subtitle {
-  text-align: center;
-  color: var(--text-color);
-  opacity: 0.60;
-  font-size: 18px;
-  margin-bottom: 30px;
-}
+.subtitle { text-align: center; color: var(--text-color); opacity: 0.60; font-size: 18px; margin-bottom: 30px; }
 .thinking-container {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
-  background-color: var(--secondary-background-color);
-  border-radius: 8px;
-  margin: 10px 0;
-  border-left: 3px solid #fc8404;
+  display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+  background-color: var(--secondary-background-color); border-radius: 8px; margin: 10px 0; border-left: 3px solid #fc8404;
 }
 .thinking-text { color: #fc8404; font-size: 14px; font-weight: 600; }
 .thinking-dots { display: flex; gap: 4px; }
 .thinking-dot {
-  width: 6px; height: 6px; border-radius: 50%;
-  background-color: #fc8404;
+  width: 6px; height: 6px; border-radius: 50%; background-color: #fc8404;
   animation: thinking-pulse 1.4s ease-in-out infinite;
 }
 .thinking-dot:nth-child(1){ animation-delay: 0s; }
@@ -139,11 +119,14 @@ st.markdown("""
 <div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
 """, unsafe_allow_html=True)
 
-# --- 4. SYSTEM INSTRUCTIONS ---
+
+# --- 5. SYSTEM INSTRUCTIONS (RAG ADAPTED) ---
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
-***REMEMBER VERY IMPORTANT!!!!!: The moment you recieve the user prompt, wait 4 seconds and read the prompt fully. If you are 90% sure that the user's query is not related to the book sources, don't bother checking the books, answer based on internet/your own way. If you aren't sure, check the books.***
+IMPORTANT: You will receive "RAG Context" extracted from textbooks. Base your answers primarily on this context. 
+If the RAG context does not contain the answer, state: "I couldn't find this in the textbook context, but here is what I know:" and use your general knowledge.
+
 
 IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
 ALSO: The textbooks were too big, so I split each into 2. The names would have ..._1.pdf or ..._2.pdf. The ... area would have the year. Check both when queries come up.
@@ -234,8 +217,21 @@ Chapter 7 • Testing your skills
 If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist/mathematician/writer terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
 """
 
-# --- 5. ROBUST FILE UPLOADER & SMART SELECTOR ---
-def upload_textbooks():
+# --- 6. RAG: CHROMA DB BUILDER ---
+@st.cache_resource(show_spinner=False)
+def get_or_build_vector_store():
+    persist_dir = "./helix_chroma_db"
+    
+    embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/gemini-embedding-001",
+        google_api_key=api_key
+    )
+    
+    # If DB exists, load it
+    if os.path.exists(persist_dir) and os.listdir(persist_dir):
+        return Chroma(persist_directory=persist_dir, embedding_function=embeddings)
+    
+    # Otherwise, build it
     target_filenames = [
         "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
         "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
@@ -244,9 +240,6 @@ def upload_textbooks():
         "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
     ]
     
-    active_files = {"sci": [], "math": [], "eng": []}
-    
-    # 🔴 Initial Loading State (Icon)
     status_placeholder = st.empty()
     status_placeholder.markdown("""
         <div class="status-indicator status-loading">
@@ -254,132 +247,64 @@ def upload_textbooks():
             <div class="spinner"></div>
         </div>
         """, unsafe_allow_html=True)
-
-    # 💬 POP-UP MESSAGE
+        
     msg_placeholder = st.empty()
     with msg_placeholder.chat_message("assistant"):
         st.markdown(f"""
         <div class="thinking-container">
-            <span class="thinking-text">🔄 Helix is loading your textbooks...</span>
+            <span class="thinking-text">🔄 Helix is building the Knowledge Base for the first time... This will take a moment!</span>
             <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
         </div>
         """, unsafe_allow_html=True)
 
-    try:
-        cwd = Path.cwd()
-        all_pdfs = list(cwd.rglob("*.pdf"))
-        if len(all_pdfs) == 0:
-            status_placeholder.markdown("""
-                <div class="status-indicator status-error" title="No PDFs Found">
-                    <span class="book-icon">⚠️</span>
-                </div>
-            """, unsafe_allow_html=True)
-            msg_placeholder.empty()
-            return {}
-            
-        pdf_map = {p.name.lower(): p for p in all_pdfs}
-            
-    except Exception:
-        status_placeholder.markdown("""
-            <div class="status-indicator status-error">
-                <span class="book-icon">⚠️</span>
-            </div>
-        """, unsafe_allow_html=True)
-        msg_placeholder.empty()
-        return {}
+    documents = []
+    cwd = Path.cwd()
+    all_pdfs = {p.name.lower(): str(p) for p in list(cwd.rglob("*.pdf"))}
 
-    for target_name in target_filenames:
-        found_path = pdf_map.get(target_name.lower())
-        
-        if found_path:
+    for target in target_filenames:
+        target_lower = target.lower()
+        if target_lower in all_pdfs:
             try:
-                if found_path.stat().st_size == 0: continue
-                
-                uploaded_file = None
-                upload_success = False
-                
-                for attempt in range(2):
-                    try:
-                        uploaded_file = client.files.upload(
-                            file=found_path,
-                            config={'mime_type': 'application/pdf'}
-                        )
-                        upload_success = True
-                        break
-                    except Exception:
-                        if attempt == 0: time.sleep(1)
-
-                if not upload_success: continue
-
-                start_time = time.time()
-                while uploaded_file.state.name == "PROCESSING":
-                    if time.time() - start_time > 45: break
-                    time.sleep(1)
-                    uploaded_file = client.files.get(name=uploaded_file.name)
-                
-                if uploaded_file.state.name == "ACTIVE":
-                    if "sci" in target_name.lower():
-                        active_files["sci"].append(uploaded_file)
-                    elif "math" in target_name.lower():
-                        active_files["math"].append(uploaded_file)
-                    elif "eng" in target_name.lower():
-                        active_files["eng"].append(uploaded_file)
-                    
+                loader = PyPDFLoader(all_pdfs[target_lower])
+                documents.extend(loader.load())
             except Exception:
-                continue
+                pass
+                
+    if not documents:
+        status_placeholder.markdown('<div class="status-indicator status-error"><span class="book-icon">⚠️</span></div>', unsafe_allow_html=True)
+        msg_placeholder.empty()
+        st.error("No valid PDFs found to build vector store.")
+        return None
 
-    # 🟢 Success State
-    status_placeholder.markdown("""
-        <div class="status-indicator status-ready" title="Books Ready!">
-            <span class="book-icon">📗</span>
-        </div>
-    """, unsafe_allow_html=True)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    split_docs = splitter.split_documents(documents)
+    
+    vectordb = Chroma.from_documents(
+        split_docs,
+        embedding=embeddings,
+        persist_directory=persist_dir
+    )
+    
+    status_placeholder.empty()
     msg_placeholder.empty()
-        
-    return active_files
+    return vectordb
 
-def select_relevant_books(query, file_dict):
-    """Selects relevant books based on keywords to save tokens."""
-    query = query.lower()
-    selected = []
-    
-    math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"]
-    sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism"]
-    eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author"]
-    
-    if any(k in query for k in math_keywords):
-        selected.extend(file_dict.get("math", []))
-    if any(k in query for k in sci_keywords):
-        selected.extend(file_dict.get("sci", []))
-    if any(k in query for k in eng_keywords):
-        selected.extend(file_dict.get("eng", []))
-        
-    if not selected:
-        selected.extend(file_dict.get("math", []))
-        selected.extend(file_dict.get("sci", []))
-        
-    return selected
-
-# --- 6. ANIMATION FUNCTIONS ---
+# --- 7. ANIMATION HELPERS ---
 def show_thinking_animation_rotating(placeholder):
     thinking_messages = [
-        "🔍 Helix is searching the textbooks 📚",
-        "🧠 Helix is analyzing your question 💭",
-        "✨ Helix is forming your answer 📝",
-        "🔬 Helix is processing information 🧪",
-        "📖 Helix is consulting the resources 📊"
+        "🔍 Helix is searching the knowledge base 📚",
+        "🧠 Helix is analyzing chunks of data 💭",
+        "✨ Helix is forming your answer 📝"
     ]
     for message in thinking_messages:
         thinking_html = f"""
         <div class="thinking-container">
             <span class="thinking-text">{message}</span>
-            <div class="thinking-dots">
-                <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
-            </div>
+            <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
         </div>
         """
         placeholder.markdown(thinking_html, unsafe_allow_html=True)
-        time.sleep(3)
+        time.sleep(2)
 
 def show_thinking_animation(message="Helix is thinking"):
     return st.markdown(f"""
@@ -390,39 +315,29 @@ def show_thinking_animation(message="Helix is thinking"):
     """, unsafe_allow_html=True)
 
 
-# --- NEW: FORMAT HISTORY FOR GOOGLE GENAI SDK ---
-def get_recent_history_contents(messages, max_messages=8):
-    """
-    Grabs up to the last `max_messages` from Streamlit session state
-    and formats them as types.Content objects so Gemini has chat context.
-    Filters out any image generation messages or the initial greeting.
-    """
-    history_contents = []
-    
-    # Exclude system messages or images, just grab raw text turns
-    text_msgs = [m for m in messages if not m.get("is_image") and not m.get("is_greeting")]
-    
-    # Grab the last N messages
-    recent_msgs = text_msgs[-max_messages:]
-    
-    for msg in recent_msgs:
-        # Map Streamlit roles to GenAI roles
-        role = "user" if msg["role"] == "user" else "model"
-        
-        # Build the structured Content object
-        history_contents.append(
-            types.Content(
-                role=role,
-                parts=[types.Part.from_text(text=msg["content"])]
-            )
-        )
-        
-    return history_contents
+# --- 8. SESSION & COOKIE MANAGEMENT ---
+# Initialize DB
+vectordb = get_or_build_vector_store()
 
+if vectordb:
+    st.markdown("""
+        <div class="status-indicator status-ready" title="Database Ready!">
+            <span class="book-icon">📗</span>
+        </div>
+    """, unsafe_allow_html=True)
 
-# --- 7. INITIALIZE SESSION ---
-if "messages" not in st.session_state:
-    st.session_state.messages = [
+# Read or Set Session Cookie
+session_id = controller.get('helix_session_id')
+if not session_id:
+    session_id = str(uuid.uuid4())
+    controller.set('helix_session_id', session_id)
+    time.sleep(0.5) # Required delay so cookie sets before rerun
+
+# Bind messages to the unique session ID inside Streamlit session_state
+state_key = f"messages_{session_id}"
+
+if state_key not in st.session_state:
+    st.session_state[state_key] = [
         {
             "role": "assistant", 
             "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?",
@@ -430,73 +345,76 @@ if "messages" not in st.session_state:
         }
     ]
 
-# Start upload if needed
-if "textbook_handles" not in st.session_state:
-    st.session_state.textbook_handles = upload_textbooks()
-else:
-    # Persist the green icon if already loaded
-    st.markdown("""
-        <div class="status-indicator status-ready" title="Books Ready!">
-            <span class="book-icon">📗</span>
-        </div>
-    """, unsafe_allow_html=True)
+# Helper to format history for GenAI prompt
+def get_recent_history_contents(messages, max_messages=8):
+    history_contents = []
+    text_msgs = [m for m in messages if not m.get("is_image") and not m.get("is_greeting")]
+    for msg in text_msgs[-max_messages:]:
+        role = "user" if msg["role"] == "user" else "model"
+        history_contents.append(
+            types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])])
+        )
+    return history_contents
 
-# --- 8. DISPLAY CHAT ---
-for message in st.session_state.messages:
+
+# --- 9. DISPLAY CHAT ---
+for message in st.session_state[state_key]:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
             st.image(message["content"])
         else:
             st.markdown(message["content"])
 
-# --- 9. MAIN LOOP ---
+# --- 10. MAIN CHAT LOOP (RAG PIPELINE) ---
 if prompt := st.chat_input("Ask Helix a question..."):
     st.chat_message("user").markdown(prompt)
-    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.session_state[state_key].append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
         thinking_placeholder = st.empty()
         show_thinking_animation_rotating(thinking_placeholder)
         
         try:
-            # 1. Gather relevant file handles
-            relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
+            # 1. RETRIEVE FROM CHROMA DB
+            # Fetch top 6 chunks closest to user query
+            docs = vectordb.similarity_search(prompt, k=6) if vectordb else []
             
-            # 2. Get past chat context natively formatted for GenAI
-            chat_history_contents = get_recent_history_contents(st.session_state.messages[:-1], max_messages=8)
+            rag_context_text = "\n\n".join([f"Source: {d.metadata.get('source', 'Unknown')}\nContent: {d.page_content}" for d in docs])
             
-            # 3. Create the *current* user prompt content object
-            # We bundle the PDFs with the user prompt in the final Content array
-            current_prompt_parts = []
-            for book in relevant_books:
-                current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type=book.mime_type))
+            # 2. FORMAT HISTORY
+            chat_history_contents = get_recent_history_contents(st.session_state[state_key][:-1], max_messages=8)
             
-            current_prompt_parts.append(types.Part.from_text(text=prompt))
+            # 3. BUILD PROMPT WITH CONTEXT
+            augmented_prompt = f"""
+            --- RAG CONTEXT START ---
+            {rag_context_text}
+            --- RAG CONTEXT END ---
+            
+            User Question: {prompt}
+            """
             
             current_content = types.Content(
                 role="user",
-                parts=current_prompt_parts
+                parts=[types.Part.from_text(text=augmented_prompt)]
             )
             
-            # Combine history with current query
             full_contents = chat_history_contents + [current_content]
 
-            # 4. Generate
+            # 4. GENERATE RESPONSE
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash", 
                 contents=full_contents,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
-                    tools=[{"google_search": {}}]
                 )
             )
             
             bot_text = text_response.text
             thinking_placeholder.empty()
             st.markdown(bot_text)
-            st.session_state.messages.append({"role": "assistant", "content": bot_text})
+            st.session_state[state_key].append({"role": "assistant", "content": bot_text})
 
-            # 5. Image Gen (Unchanged)
+            # 5. IMAGE GENERATION
             if "IMAGE_GEN:" in bot_text:
                 try:
                     img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
@@ -512,7 +430,7 @@ if prompt := st.chat_input("Ask Helix a question..."):
                     for part in img_resp.parts:
                         if part.inline_data:
                             st.image(part.inline_data.data, caption="Generated by Helix")
-                            st.session_state.messages.append({"role": "assistant", "content": part.inline_data.data, "is_image": True})
+                            st.session_state[state_key].append({"role": "assistant", "content": part.inline_data.data, "is_image": True})
                             img_thinking.empty()
                 except Exception:
                     st.error("Image generation failed.")
@@ -520,9 +438,4 @@ if prompt := st.chat_input("Ask Helix a question..."):
         except Exception as e:
             thinking_placeholder.empty()
             st.error(f"Helix Error: {e}")
-            if "403" in str(e):
-                st.warning("⚠️ Session expired. Refresh page.")
-            elif "429" in str(e):
-                st.warning("⚠️ Too many requests. Please wait a moment.")
-            elif "400" in str(e):
-                st.warning("⚠️ Query too complex. Try asking about a specific subject (Math, Science, or English).")
+
