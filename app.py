@@ -382,4 +382,208 @@ def get_vector_db():
         <div class="status-indicator status-ready" title="Books Ready!">
             <span class="book-icon">📗</span>
         </div>
-    """, unsafe_allow_html=T
+    """, unsafe_allow_html=True)
+
+    return vectordb
+
+vectordb = get_vector_db()
+
+if vectordb:
+    st.markdown("""
+        <div class="status-indicator status-ready" title="Books Ready!">
+            <span class="book-icon">📗</span>
+        </div>
+    """, unsafe_allow_html=True)
+
+# --- 8. ANIMATION FUNCTIONS ---
+def show_thinking_animation_rotating(placeholder):
+    thinking_messages = [
+        "🔍 Helix is searching the textbooks 📚",
+        "🧠 Helix is analyzing your question 💭",
+        "✨ Helix is forming your answer 📝",
+        "🔬 Helix is processing information 🧪",
+        "📖 Helix is consulting the resources 📊"
+    ]
+    for message in thinking_messages:
+        thinking_html = f"""
+        <div class="thinking-container">
+            <span class="thinking-text">{message}</span>
+            <div class="thinking-dots">
+                <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
+            </div>
+        </div>
+        """
+        placeholder.markdown(thinking_html, unsafe_allow_html=True)
+        time.sleep(3)
+
+def show_thinking_animation(message="Helix is thinking"):
+    return st.markdown(f"""
+    <div class="thinking-container">
+        <span class="thinking-text">{message}</span>
+        <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# --- 9. COOKIE-BASED SESSION KEY ---
+controller = CookieController()
+session_id = controller.get("helix_session_id")
+if not session_id:
+    session_id = str(uuid.uuid4())
+    controller.set("helix_session_id", session_id)
+    time.sleep(0.2)
+
+MESSAGES_KEY = f"messages_{session_id}"
+
+# --- 10. INITIALIZE SESSION ---
+if MESSAGES_KEY not in st.session_state:
+    st.session_state[MESSAGES_KEY] = [
+        {"role": "assistant", "content":
+            "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\n"
+            "I can answer your doubts, draw diagrams, and create quizes! 📚\n\n"
+            "**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n"
+            "*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\n"
+            "What are we learning today?"
+        }
+    ]
+
+# --- 11. DISPLAY CHAT ---
+for message in st.session_state[MESSAGES_KEY]:
+    with st.chat_message(message["role"]):
+        if message.get("is_image"):
+            st.image(message["content"])
+        else:
+            st.markdown(message["content"])
+
+# --- 12. MEMORY: LAST 8 MESSAGES ---
+def get_last_n_messages_for_model(messages, n=8):
+    msgs = [m for m in messages if not m.get("is_image")]
+    history = []
+    for m in msgs[-n:]:
+        role = "user" if m["role"] == "user" else "model"
+        history.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
+    return history
+
+# --- 13. RAG RETRIEVAL WITH METADATA FILTERS ---
+def retrieve_rag_context(query: str, k: int = 8):
+    if not vectordb:
+        return "", []
+
+    subj = infer_subject(query)
+    stage = infer_stage(query)
+
+    if subj == "eng" and stage == 9:
+        return "", []
+
+    candidates = vectordb.similarity_search(query, k=25)
+    filtered = []
+    for d in candidates:
+        md = d.metadata or {}
+        if subj and md.get("subject") != subj:
+            continue
+        if stage and md.get("stage") != stage:
+            continue
+        filtered.append(d)
+
+    final_docs = filtered[:k] if len(filtered) >= 2 else candidates[:k]
+
+    lines = []
+    for i, d in enumerate(final_docs, 1):
+        src = d.metadata.get("filename") or d.metadata.get("source", "Unknown")
+        page = d.metadata.get("page", "Unknown")
+        lines.append(
+            f"Source {i}\n"
+            f"File: {src}\n"
+            f"Page: {page}\n"
+            f"Content:\n{d.page_content}"
+        )
+
+    return "\n\n".join(lines), final_docs
+
+# --- 14. MAIN LOOP ---
+if prompt := st.chat_input("Ask Helix a question..."):
+    st.chat_message("user").markdown(prompt)
+    st.session_state[MESSAGES_KEY].append({"role": "user", "content": prompt})
+
+    with st.chat_message("assistant"):
+        thinking_placeholder = st.empty()
+        show_thinking_animation_rotating(thinking_placeholder)
+
+        try:
+            rag_context, _docs = retrieve_rag_context(prompt, k=8)
+            chat_history_contents = get_last_n_messages_for_model(st.session_state[MESSAGES_KEY][:-1], n=8)
+
+            # --- DEBUG EXPANDER: Let's you see exactly what the AI is reading! ---
+            with st.expander("🔍 See what textbook pages Helix read for this question"):
+                if rag_context.strip():
+                    st.text(rag_context)
+                else:
+                    st.warning("No context retrieved. Database might be empty or missing.")
+
+            # Augmented prompt: Softened slightly so it isn't overly strict
+            augmented_prompt = f"""
+You are Helix, a helpful tutor. You are answering a student based on textbook excerpts.
+
+INSTRUCTIONS:
+1. Carefully read the RAG Context below to find the answer.
+2. Use the "File" and "Page" from the context to cite your source and avoid mixing up subjects.
+3. If the context contains enough information to answer the prompt (even partially), use it!
+4. IF the RAG Context is completely irrelevant or missing the answer, you MUST state: "I couldn't find this in your textbook, but here is what I know:" and then answer using your general knowledge.
+
+RAG Context:
+{rag_context}
+
+Question:
+{prompt}
+""".strip()
+
+            current_content = types.Content(
+                role="user",
+                parts=[types.Part.from_text(text=augmented_prompt)]
+            )
+
+            # Generate (NO Google Search tools = Offline memory only)
+            text_response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=chat_history_contents + [current_content],
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION
+                )
+            )
+
+            bot_text = text_response.text
+            thinking_placeholder.empty()
+            st.markdown(bot_text)
+            st.session_state[MESSAGES_KEY].append({"role": "assistant", "content": bot_text})
+
+            # Image Gen
+            if "IMAGE_GEN:" in bot_text:
+                try:
+                    img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
+                    img_thinking = st.empty()
+                    with img_thinking:
+                        show_thinking_animation("🖌️ Painting diagram...")
+
+                    img_resp = client.models.generate_content(
+                        model="gemini-3-pro-image-preview",
+                        contents=[img_desc],
+                        config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
+                    )
+
+                    for part in img_resp.parts:
+                        if part.inline_data:
+                            st.image(part.inline_data.data, caption="Generated by Helix")
+                            st.session_state[MESSAGES_KEY].append(
+                                {"role": "assistant", "content": part.inline_data.data, "is_image": True}
+                            )
+                            img_thinking.empty()
+                except Exception:
+                    st.error("Image generation failed.")
+
+        except Exception as e:
+            thinking_placeholder.empty()
+            st.error(f"Helix Error: {e}")
+            if "403" in str(e):
+                st.warning("⚠️ Session expired. Refresh page.")
+            elif "429" in str(e):
+                st.warning("⚠️ Too many requests. Please wait a moment.")
+
