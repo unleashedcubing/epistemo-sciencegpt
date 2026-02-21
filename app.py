@@ -279,10 +279,18 @@ def infer_subject(query: str):
 
 def infer_stage(query: str):
     q = query.lower()
-    m = re.search(r"\bstage\s*(7|8|9)\b", q)
-    if m: return int(m.group(1))
-    g = re.search(r"\bgrade\s*(6|7|8)\b", q)
-    if g: return int(g.group(1)) + 1
+    
+    # Matches "stage 7", "7th stage", etc.
+    m_stage = re.search(r"\bstage\s*([789])\b|\b([789])(?:th)?\s*stage\b", q)
+    if m_stage: 
+        return int(m_stage.group(1) or m_stage.group(2))
+        
+    # Matches "grade 7", "7th grade", "year 7", etc.
+    m_grade = re.search(r"\b(?:grade|year)\s*([678])\b|\b([678])(?:th)?\s*(?:grade|year)\b", q)
+    if m_grade: 
+        # Grade 7 = Stage 8 in Cambridge
+        return int(m_grade.group(1) or m_grade.group(2)) + 1
+        
     return None
 
 def parse_filename_metadata(filename: str):
@@ -471,20 +479,33 @@ def retrieve_rag_context(query: str, k: int = 8):
     subj = infer_subject(query)
     stage = infer_stage(query)
 
+    # Special rule: No textbook available for Stage 9 English
     if subj == "eng" and stage == 9:
         return "", []
 
-    candidates = vectordb.similarity_search(query, k=25)
-    filtered = []
-    for d in candidates:
-        md = d.metadata or {}
-        if subj and md.get("subject") != subj:
-            continue
-        if stage and md.get("stage") != stage:
-            continue
-        filtered.append(d)
+    # Build strict exact filter dictionary for Chroma
+    search_filter = {}
+    if subj:
+        search_filter["subject"] = subj
+    if stage:
+        search_filter["stage"] = stage
 
-    final_docs = filtered[:k] if len(filtered) >= 2 else candidates[:k]
+    final_docs = []
+    if search_filter:
+        try:
+            # Chroma requires complex $and filters if there are multiple keys
+            if len(search_filter) > 1:
+                filter_dict = {"$and": [{k: v} for k, v in search_filter.items()]}
+            else:
+                filter_dict = search_filter
+                
+            final_docs = vectordb.similarity_search(query, k=k, filter=filter_dict)
+        except Exception:
+            # Fallback if there's an issue with the filter format
+            final_docs = vectordb.similarity_search(query, k=k)
+    else:
+        # If no specific subject/grade is mentioned, search all books
+        final_docs = vectordb.similarity_search(query, k=k)
 
     lines = []
     for i, d in enumerate(final_docs, 1):
@@ -527,7 +548,7 @@ INSTRUCTIONS:
 1. Carefully read the RAG Context below to find the answer.
 2. Use the "File" and "Page" from the context to cite your source and avoid mixing up subjects.
 3. If the context contains enough information to answer the prompt (even partially), use it!
-4. IF the RAG Context is completely irrelevant or missing the answer, you MUST state: "I couldn't find this in your textbook, but here is what I know:" and then answer using your general knowledge.
+4. IF the RAG Context is completely irrelevant or missing the answer, you MUST state: "I couldn't find this in your textbook, but here is what I know:" and then answer fully using your general knowledge.
 
 RAG Context:
 {rag_context}
@@ -586,4 +607,3 @@ Question:
                 st.warning("⚠️ Session expired. Refresh page.")
             elif "429" in str(e):
                 st.warning("⚠️ Too many requests. Please wait a moment.")
-
