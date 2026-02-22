@@ -489,7 +489,7 @@ INSTRUCTIONS:
 1. Carefully read the RAG Context below to find the answer.
 2. Use the "File" and "Page" from the context to cite your source and avoid mixing up subjects.
 3. If the context contains enough information to answer the prompt (even partially), use it!
-4. IF the RAG Context is completely irrelevant or missing the answer, you MUST state: "I couldn't find this in your textbook, but here is what I know:" and then answer fully using your general knowledge.
+4. IF the RAG Context is completely irrelevant or missing the answer, answer fully using your general knowledge.
 
 RAG Context:
 {rag_context}
