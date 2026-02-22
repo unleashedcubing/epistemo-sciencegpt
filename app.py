@@ -6,7 +6,6 @@ import streamlit as st
 import os
 import time
 import re
-import uuid
 import shutil
 import random
 from pathlib import Path
@@ -18,23 +17,21 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-
-# --- 0. HARD RESET SCRIPT (FIXES INTERNAL ERROR) ---
-# If you are still getting the Chroma crash, uncomment the line below, run it ONCE, 
-# wait for it to say "WIPED", then comment it back out.
-def hard_reset_chroma():
-    persist_dir = "./helix_chroma_db"
-    if os.path.exists(persist_dir):
-        shutil.rmtree(persist_dir)
-        st.cache_resource.clear()
-        st.error("🚨 CORRUPTED DATABASE WIPED. PLEASE REFRESH THE PAGE NOW.")
-        st.stop()
-
-# UNCOMMENT THIS LINE ONLY IF IT IS STILL CRASHING, THEN RE-COMMENT IT:
-# hard_reset_chroma() 
+import chromadb
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
+
+# --- EMERGENCY DATABASE RESET BUTTON ---
+with st.sidebar:
+    st.warning("⚠️ Admin Tools")
+    if st.button("Reset Database (Fix 'I can't find this' error)"):
+        persist_dir = "./helix_chroma_db"
+        if os.path.exists(persist_dir):
+            shutil.rmtree(persist_dir)  
+            st.success("Database deleted! Please refresh the web page.")
+        else:
+            st.info("Database doesn't exist yet.")
 
 # --- 2. API CLIENT SETUP ---
 api_key = os.environ.get("GOOGLE_API_KEY")
@@ -54,64 +51,37 @@ except Exception as e:
 # --- 3. THEME CSS & STATUS INDICATOR ---
 st.markdown("""
 <style>
-/* Theme-aware app background */
 .stApp {
   background:
-    radial-gradient(800px circle at 50% 0%,
-      rgba(0, 212, 255, 0.08),
-      rgba(0, 212, 255, 0.00) 60%),
+    radial-gradient(800px circle at 50% 0%, rgba(0, 212, 255, 0.08), rgba(0, 212, 255, 0.00) 60%),
     var(--background-color);
   color: var(--text-color);
 }
-
-/* Status Indicator */
 .status-indicator {
-  position: fixed;
-  top: 60px;
-  left: 15px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background-color: rgba(30, 30, 30, 0.8);
-  border-radius: 20px;
-  backdrop-filter: blur(8px);
-  z-index: 100000;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-  border: 1px solid rgba(255,255,255,0.1);
-  transition: all 0.3s ease;
+  position: fixed; top: 60px; left: 15px; display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; background-color: rgba(30, 30, 30, 0.8); border-radius: 20px;
+  backdrop-filter: blur(8px); z-index: 100000; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.1); transition: all 0.3s ease;
 }
-
 .book-icon { font-size: 24px; }
-
-/* Loading Spinner */
 .spinner {
-  width: 18px; height: 18px;
-  border: 3px solid rgba(255, 255, 255, 0.3);
-  border-radius: 50%; border-top-color: #00d4ff;
-  animation: spin 1s ease-in-out infinite;
+  width: 18px; height: 18px; border: 3px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%; border-top-color: #00d4ff; animation: spin 1s ease-in-out infinite;
 }
-
 @keyframes spin { to { transform: rotate(360deg); } }
-
-/* Status Colors */
 .status-loading { border-color: #ff4b4b; }
 .status-loading .book-icon { animation: pulse-red 1.5s infinite; }
 .status-ready { border-color: #00c04b; background-color: rgba(0, 192, 75, 0.15); }
 .status-error { border-color: #ffa500; }
-
 @keyframes pulse-red {
   0% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.1); opacity: 0.7; }
   100% { transform: scale(1); opacity: 1; }
 }
-
-/* Title Styles */
 .big-title {
   font-family: 'Inter', sans-serif; color: #00d4ff; text-align: center;
   font-size: 48px; font-weight: 1200; letter-spacing: -3px; margin-bottom: 0px;
-  text-shadow: 0 0 6px rgba(0, 212, 255, 0.55);
-  animation: helix-glow 2.2s ease-in-out infinite;
+  text-shadow: 0 0 6px rgba(0, 212, 255, 0.55); animation: helix-glow 2.2s ease-in-out infinite;
 }
 @keyframes helix-glow {
   0%, 100% { text-shadow: 0 0 6px rgba(0, 212, 255, 0.45); }
@@ -140,7 +110,6 @@ st.markdown("""
 <div class="big-title">📚 helix.ai</div>
 <div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
 """, unsafe_allow_html=True)
-
 
 # --- 4. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
@@ -246,27 +215,6 @@ TARGET_FILENAMES = [
     "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
 ]
 
-# --- 6. HELPERS: SUBJECT/STAGE PARSING ---
-def infer_subject(query: str):
-    q = query.lower()
-    math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"]
-    sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism"]
-    eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author", "travel writing"]
-    if any(k in q for k in math_keywords): return "math"
-    if any(k in q for k in sci_keywords): return "sci"
-    if any(k in q for k in eng_keywords): return "eng"
-    return None
-
-def infer_stage(query: str):
-    q = query.lower()
-    m_stage = re.search(r"\bstage\s*([789])\b|\b([789])(?:th)?\s*stage\b", q)
-    if m_stage: return int(m_stage.group(1) or m_stage.group(2))
-        
-    m_grade = re.search(r"\b(?:grade|year)\s*([678])\b|\b([678])(?:th)?\s*(?:grade|year)\b", q)
-    if m_grade: return int(m_grade.group(1) or m_grade.group(2)) + 1
-        
-    return None
-
 def parse_filename_metadata(filename: str):
     name = filename.lower()
     stage = None
@@ -292,18 +240,24 @@ def parse_filename_metadata(filename: str):
         "filename": filename
     }
 
-# --- 7. RAG: BUILD/LOAD CHROMA ---
-@st.cache_resource(show_spinner=False)
+# --- 7. RAG: BUILD/LOAD CHROMA (NO CACHE_RESOURCE) ---
 def get_vector_db():
     persist_dir = "./helix_chroma_db"
-
+    
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/gemini-embedding-001",
         google_api_key=api_key
     )
 
-    if os.path.exists(persist_dir) and os.listdir(persist_dir):
-        return Chroma(persist_directory=persist_dir, embedding_function=embeddings)
+    client = chromadb.PersistentClient(path=persist_dir)
+    collection_name = "helix_collection"
+
+    try:
+        col = client.get_collection(collection_name)
+        if col.count() > 0:
+            return Chroma(client=client, collection_name=collection_name, embedding_function=embeddings)
+    except Exception:
+        pass
 
     status_placeholder = st.empty()
     status_placeholder.markdown("""
@@ -352,11 +306,12 @@ def get_vector_db():
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     split_docs = splitter.split_documents(documents)
 
-    vectordb = Chroma.from_documents(
-        split_docs,
-        embedding=embeddings,
-        persist_directory=persist_dir
-    )
+    vectordb = Chroma(client=client, collection_name=collection_name, embedding_function=embeddings)
+    
+    batch_size = 100
+    for i in range(0, len(split_docs), batch_size):
+        batch = split_docs[i:i + batch_size]
+        vectordb.add_documents(batch)
 
     msg_placeholder.empty()
     status_placeholder.markdown("""
@@ -367,7 +322,10 @@ def get_vector_db():
 
     return vectordb
 
-vectordb = get_vector_db()
+if "vectordb" not in st.session_state:
+    st.session_state.vectordb = get_vector_db()
+
+vectordb = st.session_state.vectordb
 
 if vectordb:
     st.markdown("""
@@ -376,7 +334,7 @@ if vectordb:
         </div>
     """, unsafe_allow_html=True)
 
-# --- 8. ANIMATION FUNCTIONS (FIXED 15-SEC DELAY) ---
+# --- 8. ANIMATION FUNCTIONS (INSTANT) ---
 def show_thinking_animation_rotating(placeholder):
     messages = [
         "🔍 Helix is searching the textbooks 📚",
@@ -431,31 +389,13 @@ def get_last_n_messages_for_model(messages, n=8):
         history.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
     return history
 
-# --- 13. RAG RETRIEVAL WITH METADATA FILTERS ---
+# --- 13. RAG RETRIEVAL (TEST MODE - NO FILTERS AT ALL) ---
 def retrieve_rag_context(query: str, k: int = 8):
     if not vectordb: return "", []
 
-    subj = infer_subject(query)
-    stage = infer_stage(query)
-
-    if subj == "eng" and stage == 9: return "", []
-
-    search_filter = {}
-    if subj: search_filter["subject"] = subj
-    if stage: search_filter["stage"] = stage
-
-    final_docs = []
-    if search_filter:
-        try:
-            if len(search_filter) > 1:
-                filter_dict = {"$and": [{k: v} for k, v in search_filter.items()]}
-            else:
-                filter_dict = search_filter
-            final_docs = vectordb.similarity_search(query, k=k, filter=filter_dict)
-        except Exception:
-            final_docs = vectordb.similarity_search(query, k=k)
-    else:
-        final_docs = vectordb.similarity_search(query, k=k)
+    # TEST MODE: We completely bypass subject/stage filters here
+    # This guarantees we fetch the top 8 matches no matter what.
+    final_docs = vectordb.similarity_search(query, k=k)
 
     lines = []
     for i, d in enumerate(final_docs, 1):
@@ -489,7 +429,7 @@ INSTRUCTIONS:
 1. Carefully read the RAG Context below to find the answer.
 2. Use the "File" and "Page" from the context to cite your source and avoid mixing up subjects.
 3. If the context contains enough information to answer the prompt (even partially), use it!
-4. IF the RAG Context is completely irrelevant or missing the answer, answer fully using your general knowledge.
+4. IF the RAG Context is completely irrelevant or missing the answer, you MUST state: "I couldn't find this in your textbook, but here is what I know:" and then answer fully using your general knowledge.
 
 RAG Context:
 {rag_context}
@@ -532,4 +472,3 @@ Question:
         except Exception as e:
             thinking_placeholder.empty()
             st.error(f"Helix Error: {e}")
-
