@@ -1,3 +1,4 @@
+# --- MUST BE THE ABSOLUTE FIRST LINES IN THE FILE ---
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
@@ -26,7 +27,8 @@ st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 with st.sidebar:
     st.warning("⚠️ Admin Tools")
     if st.button("Reset Database (Fix 'I can't find this' error)"):
-        persist_dir = "./helix_chroma_db"
+        # Fixed path to point to the new writable directory
+        persist_dir = "/tmp/helix_chroma_db"
         if os.path.exists(persist_dir):
             shutil.rmtree(persist_dir)  
             st.success("Database deleted! Please refresh the web page.")
@@ -242,7 +244,8 @@ def parse_filename_metadata(filename: str):
 
 # --- 7. RAG: BUILD/LOAD CHROMA (NO CACHE_RESOURCE) ---
 def get_vector_db():
-    persist_dir = "./helix_chroma_db"
+    # MAGIC FIX: Route to the Linux /tmp folder which is ALWAYS Read/Write!
+    persist_dir = "/tmp/helix_chroma_db"
     
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/gemini-embedding-001",
