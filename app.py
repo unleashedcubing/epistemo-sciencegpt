@@ -1,3 +1,4 @@
+# --- MUST BE THE ABSOLUTE FIRST LINES IN THE FILE ---
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
@@ -6,10 +7,9 @@ import streamlit as st
 import os
 import time
 import re
-import shutil
 import random
-from pathlib import Path
 import gc
+from pathlib import Path
 
 from google import genai
 from google.genai import types
@@ -22,17 +22,6 @@ import chromadb
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
-
-# --- EMERGENCY DATABASE RESET BUTTON ---
-with st.sidebar:
-    st.warning("⚠️ Admin Tools")
-    if st.button("Reset Database (Fix 'I can't find this' error)"):
-        persist_dir = "/tmp/helix_chroma_db"
-        if os.path.exists(persist_dir):
-            shutil.rmtree(persist_dir)  
-            st.success("Database deleted! Please refresh the web page.")
-        else:
-            st.info("Database doesn't exist yet.")
 
 # --- 2. API CLIENT SETUP ---
 api_key = os.environ.get("GOOGLE_API_KEY")
@@ -241,27 +230,19 @@ def parse_filename_metadata(filename: str):
         "filename": filename
     }
 
-# --- 7. RAG: BIG DATA / LOW MEMORY ENGINE ---
+# --- 7. RAG: IN-MEMORY, LOW RAM ENGINE ---
+@st.cache_resource(show_spinner=False)
 def get_vector_db():
-    persist_dir = "/tmp/helix_chroma_db"
-    
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/gemini-embedding-001",
         google_api_key=api_key
     )
 
-    client = chromadb.PersistentClient(path=persist_dir)
+    # MAGIC FIX: Use EphemeralClient (RAM Only) to bypass Streamlit Read-Only Errors
+    client = chromadb.EphemeralClient()
     collection_name = "helix_collection"
 
-    # 1. Check if DB is already fully built
-    try:
-        col = client.get_collection(collection_name)
-        if col.count() > 0:
-            return Chroma(client=client, collection_name=collection_name, embedding_function=embeddings)
-    except Exception:
-        pass
-
-    # 2. Setup UI
+    # Setup UI
     status_placeholder = st.empty()
     status_placeholder.markdown("""
         <div class="status-indicator status-loading">
@@ -275,7 +256,7 @@ def get_vector_db():
     with msg_placeholder.chat_message("assistant"):
         progress_text.markdown("""
         <div class="thinking-container">
-            <span class="thinking-text">🔄 Helix is building the database... (Large files detected)</span>
+            <span class="thinking-text">🔄 Helix is reading the books... (Large files detected)</span>
             <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
         </div>
         """, unsafe_allow_html=True)
@@ -286,7 +267,7 @@ def get_vector_db():
 
     vectordb = Chroma(client=client, collection_name=collection_name, embedding_function=embeddings)
     
-    # 3. LOW MEMORY LOOP: Process ONE book at a time
+    # Process one document at a time to save RAM
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
     
     for idx, target in enumerate(TARGET_FILENAMES):
@@ -295,7 +276,7 @@ def get_vector_db():
         
         progress_text.markdown(f"""
         <div class="thinking-container">
-            <span class="thinking-text">🔄 Processing Book {idx+1}/{len(TARGET_FILENAMES)}: {target}</span>
+            <span class="thinking-text">🔄 Memorizing Book {idx+1}/{len(TARGET_FILENAMES)}: {target}</span>
             <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
         </div>
         """, unsafe_allow_html=True)
@@ -311,14 +292,14 @@ def get_vector_db():
             # Split ONE document
             split_docs = splitter.split_documents(docs)
             
-            # Send to Google in tiny batches (to avoid rate limits and memory spikes)
+            # Send to Google API in small batches to avoid timeouts
             batch_size = 50
             for i in range(0, len(split_docs), batch_size):
                 batch = split_docs[i:i + batch_size]
                 vectordb.add_documents(batch)
-                time.sleep(1) # Crucial: Let Google breathe so it doesn't Time Out
+                time.sleep(1) # Let Google API breathe
 
-            # LOW MEMORY TRICK: Force Python to delete the 250MB PDF from RAM before the next loop
+            # Wipe PDF from RAM
             del loader
             del docs
             del split_docs
@@ -406,11 +387,11 @@ def get_last_n_messages_for_model(messages, n=8):
         history.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
     return history
 
-# --- 13. RAG RETRIEVAL (TEST MODE - NO FILTERS AT ALL) ---
+# --- 13. RAG RETRIEVAL (TEST MODE - NO FILTERS) ---
 def retrieve_rag_context(query: str, k: int = 8):
     if not vectordb: return "", []
 
-    # TEST MODE: We completely bypass subject/stage filters here
+    # Bypassing filters for the test
     final_docs = vectordb.similarity_search(query, k=k)
 
     lines = []
@@ -488,4 +469,3 @@ Question:
         except Exception as e:
             thinking_placeholder.empty()
             st.error(f"Helix Error: {e}")
-
