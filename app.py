@@ -10,6 +10,7 @@ import re
 import shutil
 import random
 from pathlib import Path
+import gc
 
 from google import genai
 from google.genai import types
@@ -27,7 +28,6 @@ st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 with st.sidebar:
     st.warning("⚠️ Admin Tools")
     if st.button("Reset Database (Fix 'I can't find this' error)"):
-        # Fixed path to point to the new writable directory
         persist_dir = "/tmp/helix_chroma_db"
         if os.path.exists(persist_dir):
             shutil.rmtree(persist_dir)  
@@ -242,9 +242,8 @@ def parse_filename_metadata(filename: str):
         "filename": filename
     }
 
-# --- 7. RAG: BUILD/LOAD CHROMA (NO CACHE_RESOURCE) ---
+# --- 7. RAG: BIG DATA / LOW MEMORY ENGINE ---
 def get_vector_db():
-    # MAGIC FIX: Route to the Linux /tmp folder which is ALWAYS Read/Write!
     persist_dir = "/tmp/helix_chroma_db"
     
     embeddings = GoogleGenerativeAIEmbeddings(
@@ -255,6 +254,7 @@ def get_vector_db():
     client = chromadb.PersistentClient(path=persist_dir)
     collection_name = "helix_collection"
 
+    # 1. Check if DB is already fully built
     try:
         col = client.get_collection(collection_name)
         if col.count() > 0:
@@ -262,6 +262,7 @@ def get_vector_db():
     except Exception:
         pass
 
+    # 2. Setup UI
     status_placeholder = st.empty()
     status_placeholder.markdown("""
         <div class="status-indicator status-loading">
@@ -271,10 +272,11 @@ def get_vector_db():
         """, unsafe_allow_html=True)
 
     msg_placeholder = st.empty()
+    progress_text = st.empty()
     with msg_placeholder.chat_message("assistant"):
-        st.markdown("""
+        progress_text.markdown("""
         <div class="thinking-container">
-            <span class="thinking-text">🔄 Helix is building your knowledge base (first run)...</span>
+            <span class="thinking-text">🔄 Helix is building the database... (Large files detected)</span>
             <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
         </div>
         """, unsafe_allow_html=True)
@@ -283,39 +285,51 @@ def get_vector_db():
     all_pdfs = list(cwd.rglob("*.pdf"))
     pdf_map = {p.name.lower(): p for p in all_pdfs}
 
-    documents = []
-    for target in TARGET_FILENAMES:
+    vectordb = Chroma(client=client, collection_name=collection_name, embedding_function=embeddings)
+    
+    # 3. LOW MEMORY LOOP: Process ONE book at a time
+    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+    
+    for idx, target in enumerate(TARGET_FILENAMES):
         p = pdf_map.get(target.lower())
         if not p: continue
+        
+        progress_text.markdown(f"""
+        <div class="thinking-container">
+            <span class="thinking-text">🔄 Processing Book {idx+1}/{len(TARGET_FILENAMES)}: {target}</span>
+            <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+        </div>
+        """, unsafe_allow_html=True)
+
         try:
+            # Load ONE document
             loader = PyPDFLoader(str(p))
             docs = loader.load()
             meta = parse_filename_metadata(p.name)
             for d in docs:
                 d.metadata = {**d.metadata, **meta}
-            documents.extend(docs)
-        except Exception:
+                
+            # Split ONE document
+            split_docs = splitter.split_documents(docs)
+            
+            # Send to Google in tiny batches (to avoid rate limits and memory spikes)
+            batch_size = 50
+            for i in range(0, len(split_docs), batch_size):
+                batch = split_docs[i:i + batch_size]
+                vectordb.add_documents(batch)
+                time.sleep(1) # Crucial: Let Google breathe so it doesn't Time Out
+
+            # LOW MEMORY TRICK: Force Python to delete the 250MB PDF from RAM before the next loop
+            del loader
+            del docs
+            del split_docs
+            gc.collect()
+
+        except Exception as e:
+            st.error(f"Error on {target}: {e}")
             continue
 
-    if not documents:
-        status_placeholder.markdown("""
-            <div class="status-indicator status-error" title="No PDFs Found">
-                <span class="book-icon">⚠️</span>
-            </div>
-        """, unsafe_allow_html=True)
-        msg_placeholder.empty()
-        return None
-
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-    split_docs = splitter.split_documents(documents)
-
-    vectordb = Chroma(client=client, collection_name=collection_name, embedding_function=embeddings)
-    
-    batch_size = 100
-    for i in range(0, len(split_docs), batch_size):
-        batch = split_docs[i:i + batch_size]
-        vectordb.add_documents(batch)
-
+    # Clean UI
     msg_placeholder.empty()
     status_placeholder.markdown("""
         <div class="status-indicator status-ready" title="Books Ready!">
@@ -325,6 +339,7 @@ def get_vector_db():
 
     return vectordb
 
+# Initialize Vector DB
 if "vectordb" not in st.session_state:
     st.session_state.vectordb = get_vector_db()
 
@@ -397,7 +412,6 @@ def retrieve_rag_context(query: str, k: int = 8):
     if not vectordb: return "", []
 
     # TEST MODE: We completely bypass subject/stage filters here
-    # This guarantees we fetch the top 8 matches no matter what.
     final_docs = vectordb.similarity_search(query, k=k)
 
     lines = []
@@ -475,3 +489,4 @@ Question:
         except Exception as e:
             thinking_placeholder.empty()
             st.error(f"Helix Error: {e}")
+
