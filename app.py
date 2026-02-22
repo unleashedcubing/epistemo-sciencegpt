@@ -237,7 +237,6 @@ def get_vector_db():
         google_api_key=api_key
     )
 
-    # MAGIC FIX: Use EphemeralClient (RAM Only) to bypass Streamlit Read-Only Errors
     client = chromadb.EphemeralClient()
     collection_name = "helix_collection"
 
@@ -250,15 +249,14 @@ def get_vector_db():
         </div>
         """, unsafe_allow_html=True)
 
-    msg_placeholder = st.empty()
-    progress_text = st.empty()
-    with msg_placeholder.chat_message("assistant"):
-        progress_text.markdown("""
-        <div class="thinking-container">
-            <span class="thinking-text">🔄 Helix is reading the books... (Large files detected)</span>
-            <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
-        </div>
-        """, unsafe_allow_html=True)
+    # FIX: Place loading text directly on the main screen, NOT in a chat bubble
+    progress_placeholder = st.empty()
+    progress_placeholder.markdown("""
+    <div class="thinking-container" style="margin: 20px auto; max-width: 600px;">
+        <span class="thinking-text">🔄 Helix is reading the books... (Large files detected)</span>
+        <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+    </div>
+    """, unsafe_allow_html=True)
 
     cwd = Path.cwd()
     all_pdfs = list(cwd.rglob("*.pdf"))
@@ -266,55 +264,53 @@ def get_vector_db():
 
     vectordb = Chroma(client=client, collection_name=collection_name, embedding_function=embeddings)
     
-    # Process one document at a time to save RAM
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
     
-    for idx, target in enumerate(TARGET_FILENAMES):
-        p = pdf_map.get(target.lower())
-        if not p: continue
-        
-        progress_text.markdown(f"""
-        <div class="thinking-container">
-            <span class="thinking-text">🔄 Memorizing Book {idx+1}/{len(TARGET_FILENAMES)}: {target}</span>
-            <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
-        </div>
-        """, unsafe_allow_html=True)
-
-        try:
-            # Load ONE document
-            loader = PyPDFLoader(str(p))
-            docs = loader.load()
-            meta = parse_filename_metadata(p.name)
-            for d in docs:
-                d.metadata = {**d.metadata, **meta}
-                
-            # Split ONE document
-            split_docs = splitter.split_documents(docs)
+    # Massive try/finally block ensures UI always resets, even if Book 20 lags
+    try:
+        for idx, target in enumerate(TARGET_FILENAMES):
+            p = pdf_map.get(target.lower())
+            if not p: continue
             
-            # Send to Google API in small batches to avoid timeouts
-            batch_size = 50
-            for i in range(0, len(split_docs), batch_size):
-                batch = split_docs[i:i + batch_size]
-                vectordb.add_documents(batch)
-                time.sleep(1) # Let Google API breathe
+            progress_placeholder.markdown(f"""
+            <div class="thinking-container" style="margin: 20px auto; max-width: 600px;">
+                <span class="thinking-text">🔄 Memorizing Book {idx+1}/{len(TARGET_FILENAMES)}: {target}</span>
+                <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+            </div>
+            """, unsafe_allow_html=True)
 
-            # Wipe PDF from RAM
-            del loader
-            del docs
-            del split_docs
-            gc.collect()
+            try:
+                loader = PyPDFLoader(str(p))
+                docs = loader.load()
+                meta = parse_filename_metadata(p.name)
+                for d in docs:
+                    d.metadata = {**d.metadata, **meta}
+                    
+                split_docs = splitter.split_documents(docs)
+                
+                batch_size = 50
+                for i in range(0, len(split_docs), batch_size):
+                    batch = split_docs[i:i + batch_size]
+                    vectordb.add_documents(batch)
+                    time.sleep(1) 
 
-        except Exception as e:
-            st.error(f"Error on {target}: {e}")
-            continue
+                del loader
+                del docs
+                del split_docs
+                gc.collect()
 
-    # Clean UI
-    msg_placeholder.empty()
-    status_placeholder.markdown("""
-        <div class="status-indicator status-ready" title="Books Ready!">
-            <span class="book-icon">📗</span>
-        </div>
-    """, unsafe_allow_html=True)
+            except Exception as e:
+                print(f"Error on {target}: {e}")
+                continue
+
+    finally:
+        # Guarantee UI cleanup
+        progress_placeholder.empty()
+        status_placeholder.markdown("""
+            <div class="status-indicator status-ready" title="Books Ready!">
+                <span class="book-icon">📗</span>
+            </div>
+        """, unsafe_allow_html=True)
 
     return vectordb
 
@@ -331,7 +327,7 @@ if vectordb:
         </div>
     """, unsafe_allow_html=True)
 
-# --- 8. ANIMATION FUNCTIONS (INSTANT) ---
+# --- 8. ANIMATION FUNCTIONS (FIXED POSITION) ---
 def show_thinking_animation_rotating(placeholder):
     messages = [
         "🔍 Helix is searching the textbooks 📚",
@@ -339,10 +335,11 @@ def show_thinking_animation_rotating(placeholder):
         "✨ Helix is forming your answer 📝",
         "🔬 Helix is processing information 🧪"
     ]
+    # Removed container background so it sits flush next to the robot icon!
     thinking_html = f"""
-    <div class="thinking-container">
-        <span class="thinking-text">{random.choice(messages)}</span>
-        <div class="thinking-dots">
+    <div style="display: flex; align-items: center; gap: 8px; padding-top: 10px;">
+        <span style="color: #fc8404; font-size: 15px; font-weight: 600;">{random.choice(messages)}</span>
+        <div class="thinking-dots" style="margin-top: 5px;">
             <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
         </div>
     </div>
@@ -351,9 +348,11 @@ def show_thinking_animation_rotating(placeholder):
 
 def show_thinking_animation(message="Helix is thinking"):
     return st.markdown(f"""
-    <div class="thinking-container">
-        <span class="thinking-text">{message}</span>
-        <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+    <div style="display: flex; align-items: center; gap: 8px; padding-top: 10px;">
+        <span style="color: #fc8404; font-size: 15px; font-weight: 600;">{message}</span>
+        <div class="thinking-dots" style="margin-top: 5px;">
+            <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
