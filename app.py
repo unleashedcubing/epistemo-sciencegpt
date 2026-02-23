@@ -1,3 +1,4 @@
+# --- MUST BE THE ABSOLUTE FIRST LINES IN THE FILE ---
 __import__('pysqlite3')
 import sys
 sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
@@ -113,15 +114,73 @@ ALSO: Use BOTH WB (Workbook) AND TB (Textbook) because the WB has questions main
 ALSO: DO NOT INTRODUCE YOURSELF LIKE "I am Helix!" as I have already created and introduction message. Just get to the user's query immediately.
 
 ### RULE 1: SOURCE PRIORITY
-- First, ALWAYS check the content of the retrieved RAG PDF chunks to answer a question.
-- If the answer is NOT in the retrieved textbook chunks, you must state: "I couldn't find this in your textbook, but here is what I know:" and then answer using your general knowledge.
+- ALWAYS prioritize the retrieved RAG PDF chunks to answer the question.
+- If the textbook chunks don't have the answer, seamlessly use your general knowledge to answer. Do not say "I couldn't find this in your textbook." Just give the best possible answer to the student.
 - The subject is seen in the last part, like this: _Eng.pdf, _Math.pdf, _Sci.pdf
 
 ### RULE 2: STAGE 9 ENGLISH TB/WB: ***IMPORTANT, VERY***
 - I couldn't find the TB/WB source for Stage 9 English, so you will go off of this table of contents:
 Chapter 1 • Writing to explore and reflect
-... (Refer to the previous list for brevity in prompt processing)
+1.1 What is travel writing?
+1.2 Selecting and noting key information in travel texts
+1.3 Comparing tone and register in travel texts
+1.4 Responding to travel writing
+1.5 Understanding grammatical choices in travel writing
+1.6 Varying sentences for effect
+1.7 Boost your vocabulary
+1.8 Creating a travel account
+Chapter 2 • Writing to inform and explain
+2.1 Matching informative texts to audience and purpose
+2.2 Using formal and informal language in information texts
+2.3 Comparing information texts
+2.4 Using discussion to prepare for a written assignment
+2.5 Planning information texts to suit different audiences
+2.6 Shaping paragraphs to suit audience and purpose
+2.7 Crafting sentences for a range of effects
+2.8 Making explanations precise and concise
+2.9 Writing encyclopedia entries
+Chapter 3 • Writing to argue and persuade
+3.1 Reviewing persuasive techniques
+3.2 Commenting on use of language to persuade
+3.3 Exploring layers of persuasive language
+3.4 Responding to the use of persuasive language
+3.5 Adapting grammar choices to create effects in argument writing
+3.6 Organising a whole argument effectively
+3.7 Organising an argument within each paragraph
+3.8 Presenting and responding to a question
+3.9 Producing an argumentative essay
+Chapter 4 • Descriptive writing
+4.1 Analysing how atmospheres are created
+4.2 Developing analysis of a description
+4.3 Analysing atmospheric descriptions
+4.4 Using images to inspire description
+4.5 Using language to develop an atmosphere
+4.6 Sustaining a cohesive atmosphere
+4.7 Creating atmosphere through punctuation
+4.8 Using structural devices to build up atmosphere
+4.9 Producing a powerful description
+Chapter 5 • Narrative writing
+5.1 Understanding story openings
+5.2 Exploring setting and atmosphere
+5.3 Introducing characters in stories
+5.4 Responding to powerful narrative
+5.5 Pitching a story
+5.6 Creating narrative suspense and climax
+5.7 Creating character
+5.8 Using tenses in narrative
+5.9 Using pronouns and sentence order for effect
+5.10 Creating a thriller
+Chapter 6 • Writing to analyse and compare
+6.1 Analysing implicit meaning in non-fiction texts
+6.2 Analysing how a play's key elements create different effects
+6.3 Using discussion skills to analyse carefully
+6.4 Comparing effectively through punctuation and grammar
+6.5 Analysing two texts
 Chapter 7 • Testing your skills
+7.1 Reading and writing questions on non-fiction texts
+7.2 Reading and writing questions on fiction texts
+7.3 Assessing your progress: non-fiction reading and writing
+7.4 Assessing your progress: fiction reading and writing
 
 ### RULE 3: IMAGE GENERATION (STRICT)
 - **IF THE USER ASKS FOR A NORMAL DIAGRAM:** If they just ask for a "diagram of a cell" or "picture of a heart", or a infographic or mindmap, or a mind map for math, you MUST output this specific command and nothing else:
@@ -224,9 +283,26 @@ def get_vector_db():
             p = pdf_map.get(target.lower())
             if not p: continue
             
+            # Format filename to beautiful title
+            meta_info = parse_filename_metadata(target)
+            stage_val = meta_info.get("stage", "?")
+            
+            subj_val = "Book"
+            if meta_info.get("subject") == "sci": subj_val = "Science"
+            elif meta_info.get("subject") == "math": subj_val = "Mathematics"
+            elif meta_info.get("subject") == "eng": subj_val = "English"
+            
+            book_val = "Workbook" if meta_info.get("book") == "WB" else "Student Book"
+            
+            part_m = re.search(r"_([12])_", target)
+            part_str = f" Part {part_m.group(1)}" if part_m else ""
+            ans_str = " Answers" if meta_info.get("is_answers") else ""
+            
+            clean_title = f"Cambridge Stage {stage_val} {subj_val} {book_val}{part_str}{ans_str}"
+
             progress_placeholder.markdown(f"""
             <div class="thinking-container" style="margin: 20px auto; max-width: 600px;">
-                <span class="thinking-text">🔄 Memorizing Book {idx+1}/{len(TARGET_FILENAMES)}: {target}</span>
+                <span class="thinking-text">🔄 Memorizing Book {idx+1}/{len(TARGET_FILENAMES)}: {clean_title}</span>
                 <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
             </div>
             """, unsafe_allow_html=True)
@@ -398,18 +474,13 @@ if prompt := st.chat_input("Ask Helix a question..."):
             rag_context, _docs = retrieve_rag_context(prompt, k=8)
             chat_history_contents = get_last_n_messages_for_model(st.session_state.messages[:-1], n=8)
 
-            with st.expander("🔍 See what textbook pages Helix read for this question"):
-                if rag_context.strip(): st.text(rag_context)
-                else: st.warning("No context retrieved. Database might be empty or missing.")
-
             augmented_prompt = f"""
 You are Helix, a helpful tutor. You are answering a student based on textbook excerpts.
 
 INSTRUCTIONS:
 1. Carefully read the RAG Context below to find the answer.
-2. Use the "File" and "Page" from the context to cite your source and avoid mixing up subjects.
-3. If the context contains enough information to answer the prompt (even partially), use it!
-4. IF the RAG Context is completely irrelevant or missing the answer, you MUST state: "I couldn't find this in your textbook, but here is what I know:" and then answer fully using your general knowledge.
+2. Use the "File" and "Page" from the context to structure your answer. 
+3. If the RAG Context is completely irrelevant or missing the answer, rely on your general knowledge to answer the student directly and seamlessly. Do not mention that the book lacks the information.
 
 RAG Context:
 {rag_context}
