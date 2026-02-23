@@ -112,10 +112,10 @@ ALSO: In MCQs, randomize the answers, because in a previous test I did using you
 ALSO: Use BOTH WB (Workbook) AND TB (Textbook) because the WB has questions mainly, but SB has theory. Using BOTH WILL GIVE YOU A WIDE RANGE OF QUESTIONS.
 ALSO: DO NOT INTRODUCE YOURSELF LIKE "I am Helix!" as I have already created and introduction message. Just get to the user's query immediately.
 
-### RULE 1: SOURCE PRIORITY
-- ALWAYS prioritize the retrieved RAG PDF chunks to answer the question.
-- If the textbook chunks don't have the answer, seamlessly use your general knowledge to answer. Do not say "I couldn't find this in your textbook." Just give the best possible answer to the student.
-- The subject is seen in the last part, like this: _Eng.pdf, _Math.pdf, _Sci.pdf
+### RULE 1: BE SEAMLESS AND NATURAL
+- ALWAYS prioritize the retrieved RAG PDF chunks to answer the question, but act as if you just know the information natively.
+- NEVER use phrases like "According to the excerpts", "I couldn't find this in the book", "The materials provided", or mention PDF filenames.
+- If the provided context is empty or irrelevant, seamlessly answer the question using your general knowledge without apologizing or mentioning the missing context.
 
 ### RULE 2: STAGE 9 ENGLISH TB/WB: ***IMPORTANT, VERY***
 - I couldn't find the TB/WB source for Stage 9 English, so you will go off of this table of contents:
@@ -325,10 +325,10 @@ def get_vector_db():
                         try:
                             vectordb.add_documents(batch)
                             time.sleep(1) # Let Google API breathe
-                            break # Success, break out of retry loop!
+                            break 
                         except Exception as e:
                             if attempt < max_retries - 1:
-                                time.sleep(3) # Wait 3 seconds and retry paragraph
+                                time.sleep(3) 
                             else:
                                 print(f"Skipping paragraph in {target} due to API Error: {e}")
 
@@ -422,7 +422,7 @@ def get_last_n_messages_for_model(messages, n=8):
         history.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
     return history
 
-# --- 13. RAG RETRIEVAL WITH SMART FILTERS ---
+# --- 13. RAG RETRIEVAL (STRICT FILTERS) ---
 def retrieve_rag_context(query: str, k: int = 8):
     if not vectordb: return "", []
 
@@ -437,7 +437,6 @@ def retrieve_rag_context(query: str, k: int = 8):
 
     final_docs = []
     
-    # Attempt strict filter search
     if search_filter:
         try:
             if len(search_filter) > 1:
@@ -447,9 +446,8 @@ def retrieve_rag_context(query: str, k: int = 8):
             final_docs = vectordb.similarity_search(query, k=k, filter=filter_dict)
         except Exception:
             final_docs = []
-
-    # FALLBACK: If strict filter found nothing (or if there were no filters), search everything!
-    if not final_docs:
+    else:
+        # Only search everything if the user DID NOT specify a stage or subject.
         final_docs = vectordb.similarity_search(query, k=k)
 
     lines = []
@@ -474,17 +472,17 @@ if prompt := st.chat_input("Ask Helix a question..."):
             chat_history_contents = get_last_n_messages_for_model(st.session_state.messages[:-1], n=8)
 
             augmented_prompt = f"""
-You are Helix, a helpful tutor. You are answering a student based on textbook excerpts.
+You are Helix. You have access to the following textbook context (hidden from the user).
 
 INSTRUCTIONS:
-1. Carefully read the RAG Context below to find the answer.
-2. Use the "File" and "Page" from the context to structure your answer. 
-3. If the RAG Context is completely irrelevant or missing the answer, rely on your general knowledge to answer the student directly and seamlessly. Do not mention that the book lacks the information.
+1. If the hidden context contains the answer, use it.
+2. If the hidden context is empty or irrelevant, seamlessly use your own knowledge.
+3. STRICT RULE: NEVER mention the words "context", "excerpt", "textbook", "materials", or filenames. Act as if you know everything natively. Make the conversation feel 100% natural.
 
-RAG Context:
+HIDDEN CONTEXT:
 {rag_context}
 
-Question:
+USER QUESTION:
 {prompt}
 """.strip()
 
