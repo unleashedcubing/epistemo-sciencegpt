@@ -108,14 +108,15 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
 IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
 ALSO: The textbooks were too big, so I split each into 2. The names would have ..._1.pdf or ..._2.pdf. The ... area would have the year. Check both when queries come up.
-ALSO: In MCQs, randomize the answers, because in a previous test I did using you, the answers were 1)C, 2)C, 3)C, 4)C. REMEMBER, RANDOMIZE MCQ ANSWERS
+ALSO: In MCQs, randomize the answers. REMEMBER, RANDOMIZE MCQ ANSWERS.
 ALSO: Use BOTH WB (Workbook) AND TB (Textbook) because the WB has questions mainly, but SB has theory. Using BOTH WILL GIVE YOU A WIDE RANGE OF QUESTIONS.
-ALSO: DO NOT INTRODUCE YOURSELF LIKE "I am Helix!" as I have already created and introduction message. Just get to the user's query immediately.
+ALSO: DO NOT INTRODUCE YOURSELF LIKE "I am Helix!" as I have already created an introduction message. Just get to the user's query immediately.
 
 ### RULE 1: BE SEAMLESS AND NATURAL
 - ALWAYS prioritize the retrieved RAG PDF chunks to answer the question, but act as if you just know the information natively.
 - NEVER use phrases like "According to the excerpts", "I couldn't find this in the book", "The materials provided", or mention PDF filenames.
 - If the provided context is empty or irrelevant, seamlessly answer the question using your general knowledge without apologizing or mentioning the missing context.
+- If the user asks about "Chapter 8" but the context seems confusing or mixed up across different subjects (e.g., math and science combined), politely ask them: "Are we looking at Science, Math, or English right now?"
 
 ### RULE 2: STAGE 9 ENGLISH TB/WB: ***IMPORTANT, VERY***
 - I couldn't find the TB/WB source for Stage 9 English, so you will go off of this table of contents:
@@ -229,30 +230,31 @@ def parse_filename_metadata(filename: str):
         "filename": filename
     }
 
-# --- 6. SMART FILTERS ---
-def infer_subject(query: str):
-    q = query.lower()
-    math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction", "maths"]
-    sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism", "photosynthesis", "respiration"]
-    eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author", "travel writing", "noun", "verb"]
+# --- 6. SMART FILTERS WITH MEMORY ---
+def infer_subject(history_text: str):
+    q = history_text.lower()
+    math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction", "maths", "arithmetic", "probability"]
+    sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism", "photosynthesis", "respiration", "compound"]
+    eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author", "travel writing", "noun", "verb", "comprehension"]
     if any(k in q for k in math_keywords): return "math"
     if any(k in q for k in sci_keywords): return "sci"
     if any(k in q for k in eng_keywords): return "eng"
     return None
 
-def infer_stage(query: str):
-    q = query.lower()
+def infer_stage(history_text: str):
+    q = history_text.lower()
     m_stage = re.search(r"\bstage\s*([789])\b|\b([789])(?:th)?\s*stage\b", q)
     if m_stage: return int(m_stage.group(1) or m_stage.group(2))
     m_grade = re.search(r"\b(?:grade|year)\s*([678])\b|\b([678])(?:th)?\s*(?:grade|year)\b", q)
     if m_grade: return int(m_grade.group(1) or m_grade.group(2)) + 1
     return None
 
-# --- 7. RAG: IN-MEMORY ENGINE WITH RETRIES ---
+# --- 7. RAG: IN-MEMORY ENGINE WITH RETRIES & UPGRADED EMBEDDINGS ---
 @st.cache_resource(show_spinner=False)
 def get_vector_db():
+    # UPGRADED ENGINE: text-embedding-004 is significantly better at finding answers
     embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/gemini-embedding-001",
+        model="models/text-embedding-004",
         google_api_key=api_key
     )
 
@@ -422,12 +424,16 @@ def get_last_n_messages_for_model(messages, n=8):
         history.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
     return history
 
-# --- 13. RAG RETRIEVAL (STRICT FILTERS) ---
-def retrieve_rag_context(query: str, k: int = 8):
+# --- 13. RAG RETRIEVAL WITH MEMORY FILTERS ---
+def retrieve_rag_context(query: str, chat_history: list, k: int = 8):
     if not vectordb: return "", []
 
-    subj = infer_subject(query)
-    stage = infer_stage(query)
+    # CONVERSATION MEMORY: Look at the last 3 user messages to infer the subject/grade
+    recent_user_msgs = [m["content"] for m in chat_history if m["role"] == "user"]
+    history_text = " ".join(recent_user_msgs[-3:]) + " " + query
+    
+    subj = infer_subject(history_text)
+    stage = infer_stage(history_text)
 
     if subj == "eng" and stage == 9: return "", []
 
@@ -447,7 +453,6 @@ def retrieve_rag_context(query: str, k: int = 8):
         except Exception:
             final_docs = []
     else:
-        # Only search everything if the user DID NOT specify a stage or subject.
         final_docs = vectordb.similarity_search(query, k=k)
 
     lines = []
@@ -468,7 +473,8 @@ if prompt := st.chat_input("Ask Helix a question..."):
         show_thinking_animation_rotating(thinking_placeholder)
 
         try:
-            rag_context, _docs = retrieve_rag_context(prompt, k=8)
+            # We now pass the session state messages to RAG so it Remembers the subject!
+            rag_context, _docs = retrieve_rag_context(prompt, st.session_state.messages, k=8)
             chat_history_contents = get_last_n_messages_for_model(st.session_state.messages[:-1], n=8)
 
             augmented_prompt = f"""
