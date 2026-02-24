@@ -249,10 +249,9 @@ def infer_stage(history_text: str):
     if m_grade: return int(m_grade.group(1) or m_grade.group(2)) + 1
     return None
 
-# --- 7. RAG: IN-MEMORY ENGINE WITH RETRIES & UPGRADED EMBEDDINGS ---
+# --- 7. RAG: IN-MEMORY ENGINE WITH ADAPTIVE HIGH-SPEED INGESTION ---
 @st.cache_resource(show_spinner=False)
 def get_vector_db():
-    # UPGRADED ENGINE: text-embedding-004 is significantly better at finding answers
     embeddings = GoogleGenerativeAIEmbeddings(
         model="models/text-embedding-004",
         google_api_key=api_key
@@ -303,7 +302,7 @@ def get_vector_db():
 
             progress_placeholder.markdown(f"""
             <div class="thinking-container" style="margin: 20px auto; max-width: 600px;">
-                <span class="thinking-text">🔄 Memorizing Book {idx+1}/{len(TARGET_FILENAMES)}: {clean_title}</span>
+                <span class="thinking-text">⚡ High-Speed Caching Book {idx+1}/{len(TARGET_FILENAMES)}: {clean_title}</span>
                 <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
             </div>
             """, unsafe_allow_html=True)
@@ -317,22 +316,29 @@ def get_vector_db():
                     
                 split_docs = splitter.split_documents(docs)
                 
-                batch_size = 50
+                # INCREASED BATCH SIZE: Sending 3x more data per request!
+                batch_size = 150 
                 for i in range(0, len(split_docs), batch_size):
                     batch = split_docs[i:i + batch_size]
                     
-                    # GOOGLE API RETRY SYSTEM
-                    max_retries = 3
+                    # ADAPTIVE RATE LIMITING: Run at max speed, only sleep if Google throttles us
+                    max_retries = 5
                     for attempt in range(max_retries):
                         try:
                             vectordb.add_documents(batch)
-                            time.sleep(1) # Let Google API breathe
+                            # SUCCESS! Do NOT sleep. Move to next batch instantly.
                             break 
                         except Exception as e:
+                            error_str = str(e).lower()
                             if attempt < max_retries - 1:
-                                time.sleep(3) 
+                                # Only back off if we hit a Rate Limit (429) or Quota error
+                                if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+                                    wait_time = 5 * (attempt + 1)
+                                    time.sleep(wait_time) 
+                                else:
+                                    time.sleep(2)
                             else:
-                                print(f"Skipping paragraph in {target} due to API Error: {e}")
+                                print(f"Skipping batch in {target} due to API Error: {e}")
 
                 del loader
                 del docs
@@ -473,7 +479,7 @@ if prompt := st.chat_input("Ask Helix a question..."):
         show_thinking_animation_rotating(thinking_placeholder)
 
         try:
-            # We now pass the session state messages to RAG so it Remembers the subject!
+            # Pass the session state messages to RAG so it Remembers the subject!
             rag_context, _docs = retrieve_rag_context(prompt, st.session_state.messages, k=8)
             chat_history_contents = get_last_n_messages_for_model(st.session_state.messages[:-1], n=8)
 
