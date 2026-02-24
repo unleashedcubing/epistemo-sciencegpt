@@ -1,23 +1,9 @@
-__import__('pysqlite3')
-import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
-
 import streamlit as st
 import os
 import time
-import re
-import random
-import gc
 from pathlib import Path
-
 from google import genai
 from google.genai import types
-
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
-import chromadb
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
@@ -40,51 +26,104 @@ except Exception as e:
 # --- 3. THEME CSS & STATUS INDICATOR ---
 st.markdown("""
 <style>
+/* Theme-aware app background */
 .stApp {
   background:
-    radial-gradient(800px circle at 50% 0%, rgba(0, 212, 255, 0.08), rgba(0, 212, 255, 0.00) 60%),
+    radial-gradient(800px circle at 50% 0%,
+      rgba(0, 212, 255, 0.08),
+      rgba(0, 212, 255, 0.00) 60%),
     var(--background-color);
   color: var(--text-color);
 }
+
+/* Status Indicator (Top Left - Moved Down) */
 .status-indicator {
-  position: fixed; top: 60px; left: 15px; display: flex; align-items: center; gap: 10px;
-  padding: 8px 12px; background-color: rgba(30, 30, 30, 0.8); border-radius: 20px;
-  backdrop-filter: blur(8px); z-index: 100000; box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-  border: 1px solid rgba(255,255,255,0.1); transition: all 0.3s ease;
+  position: fixed;
+  top: 60px;
+  left: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background-color: rgba(30, 30, 30, 0.8);
+  border-radius: 20px;
+  backdrop-filter: blur(8px);
+  z-index: 100000;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.1);
+  transition: all 0.3s ease;
 }
-.book-icon { font-size: 24px; }
+
+.book-icon {
+  font-size: 24px;
+}
+
+/* Loading Spinner */
 .spinner {
-  width: 18px; height: 18px; border: 3px solid rgba(255, 255, 255, 0.3);
-  border-radius: 50%; border-top-color: #00d4ff; animation: spin 1s ease-in-out infinite;
+  width: 18px;
+  height: 18px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: #00d4ff;
+  animation: spin 1s ease-in-out infinite;
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Status Colors */
 .status-loading { border-color: #ff4b4b; }
 .status-loading .book-icon { animation: pulse-red 1.5s infinite; }
+
 .status-ready { border-color: #00c04b; background-color: rgba(0, 192, 75, 0.15); }
+
 .status-error { border-color: #ffa500; }
+
 @keyframes pulse-red {
   0% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.1); opacity: 0.7; }
   100% { transform: scale(1); opacity: 1; }
 }
+
+/* Title Styles */
 .big-title {
-  font-family: 'Inter', sans-serif; color: #00d4ff; text-align: center;
-  font-size: 48px; font-weight: 1200; letter-spacing: -3px; margin-bottom: 0px;
-  text-shadow: 0 0 6px rgba(0, 212, 255, 0.55); animation: helix-glow 2.2s ease-in-out infinite;
+  font-family: 'Inter', sans-serif;
+  color: #00d4ff;
+  text-align: center;
+  font-size: 48px;
+  font-weight: 1200;
+  letter-spacing: -3px;
+  margin-bottom: 0px;
+  text-shadow: 0 0 6px rgba(0, 212, 255, 0.55);
+  animation: helix-glow 2.2s ease-in-out infinite;
 }
 @keyframes helix-glow {
   0%, 100% { text-shadow: 0 0 6px rgba(0, 212, 255, 0.45); }
   50% { text-shadow: 0 0 8px rgba(0, 212, 255, 0.75); }
 }
-.subtitle { text-align: center; color: var(--text-color); opacity: 0.60; font-size: 18px; margin-bottom: 30px; }
+.subtitle {
+  text-align: center;
+  color: var(--text-color);
+  opacity: 0.60;
+  font-size: 18px;
+  margin-bottom: 30px;
+}
 .thinking-container {
-  display: flex; align-items: center; gap: 8px; padding: 12px 16px;
-  background-color: var(--secondary-background-color); border-radius: 8px; margin: 10px 0; border-left: 3px solid #fc8404;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background-color: var(--secondary-background-color);
+  border-radius: 8px;
+  margin: 10px 0;
+  border-left: 3px solid #fc8404;
 }
 .thinking-text { color: #fc8404; font-size: 14px; font-weight: 600; }
 .thinking-dots { display: flex; gap: 4px; }
 .thinking-dot {
-  width: 6px; height: 6px; border-radius: 50%; background-color: #fc8404;
+  width: 6px; height: 6px; border-radius: 50%;
+  background-color: #fc8404;
   animation: thinking-pulse 1.4s ease-in-out infinite;
 }
 .thinking-dot:nth-child(1){ animation-delay: 0s; }
@@ -108,15 +147,14 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
 IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
 ALSO: The textbooks were too big, so I split each into 2. The names would have ..._1.pdf or ..._2.pdf. The ... area would have the year. Check both when queries come up.
-ALSO: In MCQs, randomize the answers. REMEMBER, RANDOMIZE MCQ ANSWERS.
+ALSO: In MCQs, randomize the answers, because in a previous test I did using you, the answers were 1)C, 2)C, 3)C, 4)C. REMEMBER, RANDOMIZE MCQ ANSWERS
 ALSO: Use BOTH WB (Workbook) AND TB (Textbook) because the WB has questions mainly, but SB has theory. Using BOTH WILL GIVE YOU A WIDE RANGE OF QUESTIONS.
-ALSO: DO NOT INTRODUCE YOURSELF LIKE "I am Helix!" as I have already created an introduction message. Just get to the user's query immediately.
+ALSO: DO NOT INTRODUCE YOURSELF LIKE "I am Helix!" as I have already created and introduction message. Just get to the user's query immediately.
 
-### RULE 1: BE SEAMLESS AND NATURAL
-- ALWAYS prioritize the retrieved RAG PDF chunks to answer the question, but act as if you just know the information natively.
-- NEVER use phrases like "According to the excerpts", "I couldn't find this in the book", "The materials provided", or mention PDF filenames.
-- If the provided context is empty or irrelevant, seamlessly answer the question using your general knowledge without apologizing or mentioning the missing context.
-- If the user asks about "Chapter 8" but the context seems confusing or mixed up across different subjects (e.g., math and science combined), politely ask them: "Are we looking at Science, Math, or English right now?"
+### RULE 1: SOURCE PRIORITY
+- First, ALWAYS check the content of the uploaded PDF files to answer a question.
+- If the answer is NOT in the textbook, you must state: "I couldn't find this in your textbook, but here is what I found online:" and then answer using your general knowledge.
+- The subject is seen in the last part, like this: _Eng.pdf, _Math.pdf, _Sci.pdf
 
 ### RULE 2: STAGE 9 ENGLISH TB/WB: ***IMPORTANT, VERY***
 - I couldn't find the TB/WB source for Stage 9 English, so you will go off of this table of contents:
@@ -188,79 +226,27 @@ Chapter 7 • Testing your skills
 
 ### RULE 4: QUESTION PAPERS
 - When asked to create a question paper, quiz, or test, strictly follow this structure:
-  - Science (Checkpoint style): produce Paper 1 and/or Paper 2 (default both) as a 50‑mark, ~45‑minute structured written paper with numbered questions showing marks like "(3)".
-  - Mathematics (Checkpoint style): produce Paper 1 non‑calculator and Paper 2 calculator (default both), each ~45 minutes and 50 marks.
-  - English (Checkpoint style): produce Paper 1 Non‑fiction and Paper 2 Fiction (default both), each ~45 minutes and 50 marks.
+  - Science (Checkpoint style): produce Paper 1 and/or Paper 2 (default both) as a 50‑mark, ~45‑minute structured written paper with numbered questions showing marks like "(3)", mixing knowledge/application plus data handling (tables/graphs) and at least one investigation/practical-skills question (variables, fair test, reliability, improvements) and at least one diagram task; then include a point-based mark scheme with working/units for calculations.
+  - Mathematics (Checkpoint style): produce Paper 1 non‑calculator and Paper 2 calculator (default both), each ~45 minutes and 50 marks, mostly structured questions with marks shown, covering arithmetic/fractions/percent, algebra, geometry, and data/statistics, including at least one multi-step word problem and requiring "show working"; then give an answer key with method marks for 2+ mark items.
+  - English (Checkpoint style): produce Paper 1 Non‑fiction and Paper 2 Fiction (default both), each ~45 minutes and 50 marks, using original passages you write (no copyrighted extracts), with structured comprehension (literal + inference + writer's effect) and one longer directed/creative writing task per paper; then include a mark scheme (acceptable reading points per mark) plus a simple writing rubric (content/organisation/style & accuracy) and a brief high-scoring outline.
 
 ### RULE 5: ARMAAN STYLE
 If a user asks you to reply in Armaan Style, you have to explain in expert physicist/chemist/biologist/mathematician/writer terms, with difficult out of textbook sources. You can then simple it down if the user wishes.
 """
 
-# --- 5. ROBUST FILE LIST ---
-TARGET_FILENAMES = [
-    "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
-    "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
-    "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
-    "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
-    "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
-]
-
-def parse_filename_metadata(filename: str):
-    name = filename.lower()
-    stage = None
-    m_stage = re.search(r"cie_(\d)_", name)
-    if m_stage: stage = int(m_stage.group(1))
-
-    book = None
-    if "_sb_" in name: book = "SB"
-    if "_wb_" in name: book = "WB"
-
-    subject = None
-    if "sci" in name: subject = "sci"
-    elif "math" in name: subject = "math"
-    elif "eng" in name: subject = "eng"
-
-    is_answers = "answers" in name
-
-    return {
-        "stage": stage,
-        "book": book,
-        "subject": subject,
-        "is_answers": is_answers,
-        "filename": filename
-    }
-
-# --- 6. SMART FILTERS WITH MEMORY ---
-def infer_subject(history_text: str):
-    q = history_text.lower()
-    math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction", "maths", "arithmetic", "probability"]
-    sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism", "photosynthesis", "respiration", "compound"]
-    eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author", "travel writing", "noun", "verb", "comprehension"]
-    if any(k in q for k in math_keywords): return "math"
-    if any(k in q for k in sci_keywords): return "sci"
-    if any(k in q for k in eng_keywords): return "eng"
-    return None
-
-def infer_stage(history_text: str):
-    q = history_text.lower()
-    m_stage = re.search(r"\bstage\s*([789])\b|\b([789])(?:th)?\s*stage\b", q)
-    if m_stage: return int(m_stage.group(1) or m_stage.group(2))
-    m_grade = re.search(r"\b(?:grade|year)\s*([678])\b|\b([678])(?:th)?\s*(?:grade|year)\b", q)
-    if m_grade: return int(m_grade.group(1) or m_grade.group(2)) + 1
-    return None
-
-# --- 7. RAG: IN-MEMORY ENGINE WITH ADAPTIVE HIGH-SPEED INGESTION ---
-@st.cache_resource(show_spinner=False)
-def get_vector_db():
-    embeddings = GoogleGenerativeAIEmbeddings(
-        model="models/text-embedding-004",
-        google_api_key=api_key
-    )
-
-    client = chromadb.EphemeralClient()
-    collection_name = "helix_collection"
-
-    # Setup UI
+# --- 5. ROBUST FILE UPLOADER & SMART SELECTOR ---
+def upload_textbooks():
+    target_filenames = [
+        "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
+        "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
+        "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
+        "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
+        "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
+    ]
+    
+    active_files = {"sci": [], "math": [], "eng": []}
+    
+    # 🔴 Initial Loading State (Icon)
     status_placeholder = st.empty()
     status_placeholder.markdown("""
         <div class="status-indicator status-loading">
@@ -269,151 +255,193 @@ def get_vector_db():
         </div>
         """, unsafe_allow_html=True)
 
-    progress_placeholder = st.empty()
-    
-    cwd = Path.cwd()
-    all_pdfs = list(cwd.rglob("*.pdf"))
-    pdf_map = {p.name.lower(): p for p in all_pdfs}
-
-    vectordb = Chroma(client=client, collection_name=collection_name, embedding_function=embeddings)
-    splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
-    
-    try:
-        for idx, target in enumerate(TARGET_FILENAMES):
-            p = pdf_map.get(target.lower())
-            if not p: continue
-            
-            # Format filename to beautiful title
-            meta_info = parse_filename_metadata(target)
-            stage_val = meta_info.get("stage", "?")
-            
-            subj_val = "Book"
-            if meta_info.get("subject") == "sci": subj_val = "Science"
-            elif meta_info.get("subject") == "math": subj_val = "Mathematics"
-            elif meta_info.get("subject") == "eng": subj_val = "English"
-            
-            book_val = "Workbook" if meta_info.get("book") == "WB" else "Student Book"
-            
-            part_m = re.search(r"_([12])_", target)
-            part_str = f" Part {part_m.group(1)}" if part_m else ""
-            ans_str = " Answers" if meta_info.get("is_answers") else ""
-            
-            clean_title = f"Cambridge Stage {stage_val} {subj_val} {book_val}{part_str}{ans_str}"
-
-            progress_placeholder.markdown(f"""
-            <div class="thinking-container" style="margin: 20px auto; max-width: 600px;">
-                <span class="thinking-text">⚡ High-Speed Caching Book {idx+1}/{len(TARGET_FILENAMES)}: {clean_title}</span>
-                <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            try:
-                loader = PyPDFLoader(str(p))
-                docs = loader.load()
-                meta = parse_filename_metadata(p.name)
-                for d in docs:
-                    d.metadata = {**d.metadata, **meta}
-                    
-                split_docs = splitter.split_documents(docs)
-                
-                # INCREASED BATCH SIZE: Sending 3x more data per request!
-                batch_size = 150 
-                for i in range(0, len(split_docs), batch_size):
-                    batch = split_docs[i:i + batch_size]
-                    
-                    # ADAPTIVE RATE LIMITING: Run at max speed, only sleep if Google throttles us
-                    max_retries = 5
-                    for attempt in range(max_retries):
-                        try:
-                            vectordb.add_documents(batch)
-                            # SUCCESS! Do NOT sleep. Move to next batch instantly.
-                            break 
-                        except Exception as e:
-                            error_str = str(e).lower()
-                            if attempt < max_retries - 1:
-                                # Only back off if we hit a Rate Limit (429) or Quota error
-                                if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
-                                    wait_time = 5 * (attempt + 1)
-                                    time.sleep(wait_time) 
-                                else:
-                                    time.sleep(2)
-                            else:
-                                print(f"Skipping batch in {target} due to API Error: {e}")
-
-                del loader
-                del docs
-                del split_docs
-                gc.collect()
-
-            except Exception as e:
-                print(f"Error on {target}: {e}")
-                continue
-
-    finally:
-        # Guarantee UI cleanup
-        progress_placeholder.empty()
-        status_placeholder.markdown("""
-            <div class="status-indicator status-ready" title="Books Ready!">
-                <span class="book-icon">📗</span>
-            </div>
+    # 💬 POP-UP MESSAGE
+    msg_placeholder = st.empty()
+    with msg_placeholder.chat_message("assistant"):
+        st.markdown(f"""
+        <div class="thinking-container">
+            <span class="thinking-text">🔄 Helix is loading your textbooks...</span>
+            <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+        </div>
         """, unsafe_allow_html=True)
 
-    return vectordb
+    try:
+        cwd = Path.cwd()
+        all_pdfs = list(cwd.rglob("*.pdf"))
+        if len(all_pdfs) == 0:
+            status_placeholder.markdown("""
+                <div class="status-indicator status-error" title="No PDFs Found">
+                    <span class="book-icon">⚠️</span>
+                </div>
+            """, unsafe_allow_html=True)
+            msg_placeholder.empty()
+            return {}
+            
+        pdf_map = {p.name.lower(): p for p in all_pdfs}
+            
+    except Exception:
+        status_placeholder.markdown("""
+            <div class="status-indicator status-error">
+                <span class="book-icon">⚠️</span>
+            </div>
+        """, unsafe_allow_html=True)
+        msg_placeholder.empty()
+        return {}
 
-# Initialize Vector DB
-if "vectordb" not in st.session_state:
-    st.session_state.vectordb = get_vector_db()
+    for target_name in target_filenames:
+        found_path = pdf_map.get(target_name.lower())
+        
+        if found_path:
+            try:
+                if found_path.stat().st_size == 0: continue
+                
+                uploaded_file = None
+                upload_success = False
+                
+                for attempt in range(2):
+                    try:
+                        uploaded_file = client.files.upload(
+                            file=found_path,
+                            config={'mime_type': 'application/pdf'}
+                        )
+                        upload_success = True
+                        break
+                    except Exception:
+                        if attempt == 0: time.sleep(1)
 
-vectordb = st.session_state.vectordb
+                if not upload_success: continue
 
-if vectordb:
+                start_time = time.time()
+                while uploaded_file.state.name == "PROCESSING":
+                    if time.time() - start_time > 45: break
+                    time.sleep(1)
+                    uploaded_file = client.files.get(name=uploaded_file.name)
+                
+                if uploaded_file.state.name == "ACTIVE":
+                    if "sci" in target_name.lower():
+                        active_files["sci"].append(uploaded_file)
+                    elif "math" in target_name.lower():
+                        active_files["math"].append(uploaded_file)
+                    elif "eng" in target_name.lower():
+                        active_files["eng"].append(uploaded_file)
+                    
+            except Exception:
+                continue
+
+    # 🟢 Success State
+    status_placeholder.markdown("""
+        <div class="status-indicator status-ready" title="Books Ready!">
+            <span class="book-icon">📗</span>
+        </div>
+    """, unsafe_allow_html=True)
+    msg_placeholder.empty()
+        
+    return active_files
+
+def select_relevant_books(query, file_dict):
+    """Selects relevant books based on keywords to save tokens."""
+    query = query.lower()
+    selected = []
+    
+    math_keywords = ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"]
+    sci_keywords = ["science", "cell", "biology", "physics", "chemistry", "atom", "energy", "force", "organism"]
+    eng_keywords = ["english", "poem", "story", "essay", "writing", "grammar", "text", "author"]
+    
+    if any(k in query for k in math_keywords):
+        selected.extend(file_dict.get("math", []))
+    if any(k in query for k in sci_keywords):
+        selected.extend(file_dict.get("sci", []))
+    if any(k in query for k in eng_keywords):
+        selected.extend(file_dict.get("eng", []))
+        
+    if not selected:
+        selected.extend(file_dict.get("math", []))
+        selected.extend(file_dict.get("sci", []))
+        
+    return selected
+
+# --- 6. ANIMATION FUNCTIONS ---
+def show_thinking_animation_rotating(placeholder):
+    thinking_messages = [
+        "🔍 Helix is searching the textbooks 📚",
+        "🧠 Helix is analyzing your question 💭",
+        "✨ Helix is forming your answer 📝",
+        "🔬 Helix is processing information 🧪",
+        "📖 Helix is consulting the resources 📊"
+    ]
+    for message in thinking_messages:
+        thinking_html = f"""
+        <div class="thinking-container">
+            <span class="thinking-text">{message}</span>
+            <div class="thinking-dots">
+                <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
+            </div>
+        </div>
+        """
+        placeholder.markdown(thinking_html, unsafe_allow_html=True)
+        time.sleep(3)
+
+def show_thinking_animation(message="Helix is thinking"):
+    return st.markdown(f"""
+    <div class="thinking-container">
+        <span class="thinking-text">{message}</span>
+        <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# --- NEW: FORMAT HISTORY FOR GOOGLE GENAI SDK ---
+def get_recent_history_contents(messages, max_messages=8):
+    """
+    Grabs up to the last `max_messages` from Streamlit session state
+    and formats them as types.Content objects so Gemini has chat context.
+    Filters out any image generation messages or the initial greeting.
+    """
+    history_contents = []
+    
+    # Exclude system messages or images, just grab raw text turns
+    text_msgs = [m for m in messages if not m.get("is_image") and not m.get("is_greeting")]
+    
+    # Grab the last N messages
+    recent_msgs = text_msgs[-max_messages:]
+    
+    for msg in recent_msgs:
+        # Map Streamlit roles to GenAI roles
+        role = "user" if msg["role"] == "user" else "model"
+        
+        # Build the structured Content object
+        history_contents.append(
+            types.Content(
+                role=role,
+                parts=[types.Part.from_text(text=msg["content"])]
+            )
+        )
+        
+    return history_contents
+
+
+# --- 7. INITIALIZE SESSION ---
+if "messages" not in st.session_state:
+    st.session_state.messages = [
+        {
+            "role": "assistant", 
+            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?",
+            "is_greeting": True
+        }
+    ]
+
+# Start upload if needed
+if "textbook_handles" not in st.session_state:
+    st.session_state.textbook_handles = upload_textbooks()
+else:
+    # Persist the green icon if already loaded
     st.markdown("""
         <div class="status-indicator status-ready" title="Books Ready!">
             <span class="book-icon">📗</span>
         </div>
     """, unsafe_allow_html=True)
 
-# --- 8. ANIMATION FUNCTIONS (FIXED POSITION) ---
-def show_thinking_animation_rotating(placeholder):
-    messages = [
-        "🔍 Helix is searching the textbooks 📚",
-        "🧠 Helix is analyzing your question 💭",
-        "✨ Helix is forming your answer 📝",
-        "🔬 Helix is processing information 🧪"
-    ]
-    thinking_html = f"""
-    <div style="display: flex; align-items: center; gap: 8px; padding-top: 10px;">
-        <span style="color: #fc8404; font-size: 15px; font-weight: 600;">{random.choice(messages)}</span>
-        <div class="thinking-dots" style="margin-top: 5px;">
-            <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
-        </div>
-    </div>
-    """
-    placeholder.markdown(thinking_html, unsafe_allow_html=True)
-
-def show_thinking_animation(message="Helix is thinking"):
-    return st.markdown(f"""
-    <div style="display: flex; align-items: center; gap: 8px; padding-top: 10px;">
-        <span style="color: #fc8404; font-size: 15px; font-weight: 600;">{message}</span>
-        <div class="thinking-dots" style="margin-top: 5px;">
-            <div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-# --- 10. INITIALIZE NATIVE SESSION STATE ---
-if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content":
-            "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\n"
-            "I can answer your doubts, draw diagrams, and create quizes! 📚\n\n"
-            "**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n"
-            "*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\n"
-            "What are we learning today?"
-        }
-    ]
-
-# --- 11. DISPLAY CHAT ---
+# --- 8. DISPLAY CHAT ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
@@ -421,55 +449,7 @@ for message in st.session_state.messages:
         else:
             st.markdown(message["content"])
 
-# --- 12. MEMORY: LAST 8 MESSAGES ---
-def get_last_n_messages_for_model(messages, n=8):
-    msgs = [m for m in messages if not m.get("is_image")]
-    history = []
-    for m in msgs[-n:]:
-        role = "user" if m["role"] == "user" else "model"
-        history.append(types.Content(role=role, parts=[types.Part.from_text(text=m["content"])]))
-    return history
-
-# --- 13. RAG RETRIEVAL WITH MEMORY FILTERS ---
-def retrieve_rag_context(query: str, chat_history: list, k: int = 8):
-    if not vectordb: return "", []
-
-    # CONVERSATION MEMORY: Look at the last 3 user messages to infer the subject/grade
-    recent_user_msgs = [m["content"] for m in chat_history if m["role"] == "user"]
-    history_text = " ".join(recent_user_msgs[-3:]) + " " + query
-    
-    subj = infer_subject(history_text)
-    stage = infer_stage(history_text)
-
-    if subj == "eng" and stage == 9: return "", []
-
-    search_filter = {}
-    if subj: search_filter["subject"] = subj
-    if stage: search_filter["stage"] = stage
-
-    final_docs = []
-    
-    if search_filter:
-        try:
-            if len(search_filter) > 1:
-                filter_dict = {"$and": [{k: v} for k, v in search_filter.items()]}
-            else:
-                filter_dict = search_filter
-            final_docs = vectordb.similarity_search(query, k=k, filter=filter_dict)
-        except Exception:
-            final_docs = []
-    else:
-        final_docs = vectordb.similarity_search(query, k=k)
-
-    lines = []
-    for i, d in enumerate(final_docs, 1):
-        src = d.metadata.get("filename") or d.metadata.get("source", "Unknown")
-        page = d.metadata.get("page", "Unknown")
-        lines.append(f"Source {i}\nFile: {src}\nPage: {page}\nContent:\n{d.page_content}")
-
-    return "\n\n".join(lines), final_docs
-
-# --- 14. MAIN LOOP ---
+# --- 9. MAIN LOOP ---
 if prompt := st.chat_input("Ask Helix a question..."):
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -477,50 +457,58 @@ if prompt := st.chat_input("Ask Helix a question..."):
     with st.chat_message("assistant"):
         thinking_placeholder = st.empty()
         show_thinking_animation_rotating(thinking_placeholder)
-
+        
         try:
-            # Pass the session state messages to RAG so it Remembers the subject!
-            rag_context, _docs = retrieve_rag_context(prompt, st.session_state.messages, k=8)
-            chat_history_contents = get_last_n_messages_for_model(st.session_state.messages[:-1], n=8)
-
-            augmented_prompt = f"""
-You are Helix. You have access to the following textbook context (hidden from the user).
-
-INSTRUCTIONS:
-1. If the hidden context contains the answer, use it.
-2. If the hidden context is empty or irrelevant, seamlessly use your own knowledge.
-3. STRICT RULE: NEVER mention the words "context", "excerpt", "textbook", "materials", or filenames. Act as if you know everything natively. Make the conversation feel 100% natural.
-
-HIDDEN CONTEXT:
-{rag_context}
-
-USER QUESTION:
-{prompt}
-""".strip()
-
-            current_content = types.Content(role="user", parts=[types.Part.from_text(text=augmented_prompt)])
-
-            text_response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=chat_history_contents + [current_content],
-                config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
+            # 1. Gather relevant file handles
+            relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
+            
+            # 2. Get past chat context natively formatted for GenAI
+            chat_history_contents = get_recent_history_contents(st.session_state.messages[:-1], max_messages=8)
+            
+            # 3. Create the *current* user prompt content object
+            # We bundle the PDFs with the user prompt in the final Content array
+            current_prompt_parts = []
+            for book in relevant_books:
+                current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type=book.mime_type))
+            
+            current_prompt_parts.append(types.Part.from_text(text=prompt))
+            
+            current_content = types.Content(
+                role="user",
+                parts=current_prompt_parts
             )
+            
+            # Combine history with current query
+            full_contents = chat_history_contents + [current_content]
 
+            # 4. Generate
+            text_response = client.models.generate_content(
+                model="gemini-2.5-flash", 
+                contents=full_contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_INSTRUCTION,
+                    tools=[{"google_search": {}}]
+                )
+            )
+            
             bot_text = text_response.text
             thinking_placeholder.empty()
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
+            # 5. Image Gen (Unchanged)
             if "IMAGE_GEN:" in bot_text:
                 try:
                     img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
                     img_thinking = st.empty()
                     with img_thinking: show_thinking_animation("🖌️ Painting diagram...")
+                    
                     img_resp = client.models.generate_content(
                         model="gemini-3-pro-image-preview",
                         contents=[img_desc],
                         config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
                     )
+                    
                     for part in img_resp.parts:
                         if part.inline_data:
                             st.image(part.inline_data.data, caption="Generated by Helix")
@@ -532,3 +520,9 @@ USER QUESTION:
         except Exception as e:
             thinking_placeholder.empty()
             st.error(f"Helix Error: {e}")
+            if "403" in str(e):
+                st.warning("⚠️ Session expired. Refresh page.")
+            elif "429" in str(e):
+                st.warning("⚠️ Too many requests. Please wait a moment.")
+            elif "400" in str(e):
+                st.warning("⚠️ Query too complex. Try asking about a specific subject (Math, Science, or English).")
