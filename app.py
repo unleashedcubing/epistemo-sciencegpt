@@ -8,7 +8,7 @@ from google.genai import types
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from io import BytesIO
 
@@ -99,26 +99,69 @@ def create_pdf(content, filename="Question_Paper.pdf"):
     
     story = []
     
-    # Parse the content
+    # --- CRITICAL: CLEAN THE CONTENT ---
     lines = content.split('\n')
+    start_index = 0
+    
+    # 1. Remove AI preamble (everything before first # header)
+    for i, line in enumerate(lines):
+        if line.strip().startswith('#'):
+            start_index = i
+            break
+            
+    lines = lines[start_index:]
+    
+    # 2. Clean citations and formatting
+    cleaned_lines = []
+    skip_section = False
     
     for line in lines:
-        line = line.strip()
+        stripped = line.strip()
         
-        if not line:
+        # Detect the "Source(s):" section and skip it entirely
+        if stripped.startswith("Source(s):") or stripped.startswith("**Source(s):**"):
+            skip_section = True
+            continue
+        
+        # Skip lines that are part of the source list (start with * or -)
+        if skip_section:
+            if not stripped or stripped.startswith("*") or stripped.startswith("-"):
+                continue
+            else:
+                skip_section = False
+        
+        # Remove inline source citations e.g. (Source: Cambridge Science Workbook 7)
+        clean_line = re.sub(r'\s*\(Source:.*?\)', '', line)
+        
+        # Remove leading asterisks from bullet points in answers
+        clean_line = re.sub(r'^\s*\*\s+', '', clean_line)
+        
+        cleaned_lines.append(clean_line)
+    
+    # 3. Build the PDF Structure
+    for line in cleaned_lines:
+        line_stripped = line.strip()
+        
+        if not line_stripped:
             story.append(Spacer(1, 0.15*inch))
             continue
             
-        # 1. Escape special XML characters for ReportLab FIRST
+        # Detect "Mark Scheme" and force page break before it
+        if "mark scheme" in line_stripped.lower() and line_stripped.startswith('#'):
+            story.append(PageBreak())
+            # Make "Mark Scheme" an H1 (remove ## if present)
+            text = re.sub(r'^#+\s*', '', line_stripped)
+            story.append(Paragraph(text, title_style))
+            continue
+            
+        # Escape special XML characters for ReportLab
         line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
         
-        # 2. Use regex to properly replace markdown bold/italics with XML tags
-        # Replaces **text** with <b>text</b>
+        # Convert markdown bold/italics
         line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
-        # Replaces *text* or _text_ with <i>text</i>
         line = re.sub(r'(?<!\w)(?:_|\*)(.*?)(?:_|\*)(?!\w)', r'<i>\1</i>', line)
         
-        # 3. Detect headers
+        # Detect standard headers
         if line.startswith('# '):
             text = line.replace('# ', '', 1).strip()
             story.append(Paragraph(text, title_style))
@@ -130,7 +173,6 @@ def create_pdf(content, filename="Question_Paper.pdf"):
             para = Paragraph(f"<b>{text}</b>", body_style)
             story.append(para)
         else:
-            # Render standard line (with inline bold/italics applied by regex)
             story.append(Paragraph(line, body_style))
     
     # Add footer
@@ -298,14 +340,17 @@ for idx, message in enumerate(st.session_state.messages):
             
             # --- PDF DOWNLOAD BUTTON ---
             if message["role"] == "assistant" and message.get("is_downloadable"):
-                pdf_buffer = create_pdf(message["content"])
-                st.download_button(
-                    label="📥 Download Question Paper as PDF",
-                    data=pdf_buffer,
-                    file_name=f"Helix_Question_Paper_{idx}.pdf",
-                    mime="application/pdf",
-                    key=f"download_{idx}"
-                )
+                try:
+                    pdf_buffer = create_pdf(message["content"])
+                    st.download_button(
+                        label="📥 Download Question Paper as PDF",
+                        data=pdf_buffer,
+                        file_name=f"Helix_Question_Paper_{idx}.pdf",
+                        mime="application/pdf",
+                        key=f"download_{idx}"
+                    )
+                except Exception:
+                    pass
 
 # --- 10. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
 if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
