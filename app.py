@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 from google import genai
 from google.genai import types
+from audio_recorder_streamlit import audio_recorder # NEW IMPORT!
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered", initial_sidebar_state="expanded")
@@ -58,10 +59,10 @@ SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
 ### RULE 1: THE MULTIMODAL & RAG SEARCH (CRITICAL)
-- If the user provides an IMAGE, analyze it carefully (e.g., solve the math problem, identify the biology diagram).
+- If the user provides an IMAGE, analyze it carefully.
 - If the user provides AUDIO, listen to their question and answer it directly.
-- You MUST search the attached PDF textbooks using OCR to verify your answers and align with the Cambridge syllabus. Cite the book (Source: Cambridge Science Textbook 7).
-- If the answer is not in the books, explicitly state: "I couldn't find this in your textbook, but here is what I know:" and use your general knowledge.
+- You MUST search the attached PDF textbooks using OCR to verify your answers. Cite the book (Source: Cambridge Science Textbook 7).
+- If the answer is not in the books, say: "I couldn't find this in your textbook, but here is what I know:" and answer normally.
 
 ### RULE 2: ASSESSMENTS
 - If making a question paper/quiz, list the source(s) ONLY ONCE at the very bottom.
@@ -72,7 +73,7 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
   IMAGE_GEN: [A high-quality illustration of the topic, detailed, white background, with labels]
 """
 
-# --- 5. GOOGLE FILE API (OCR-CAPABLE RAG) ---
+# --- 5. GOOGLE FILE API ---
 @st.cache_resource(show_spinner=False)
 def upload_textbooks():
     target_filenames = [
@@ -155,7 +156,7 @@ def select_relevant_books(query, file_dict):
     add_books("eng", is_eng)
     return selected[:3] 
 
-# --- 7. MULTIMODAL SIDEBAR (UPDATED FOR CLOUD STABILITY) ---
+# --- 7. MULTIMODAL SIDEBAR (BULLETPROOF AUDIO FIX) ---
 with st.sidebar:
     st.title("📎 Multimodal Inputs")
     st.caption("Helix can see your homework and hear your questions!")
@@ -165,9 +166,20 @@ with st.sidebar:
     
     st.divider()
     
-    # Voice: Give users two reliable options
-    st.write("🎤 **Ask via Voice**")
-    user_audio = st.audio_input("Record directly:")
+    # Voice: Robust JavaScript-based recorder 
+    st.write("🎤 **Record a Voice Note**")
+    st.caption("Click to record, click again to stop.")
+    
+    # This widget returns raw bytes directly, bypassing websocket crashes!
+    recorded_audio_bytes = audio_recorder(
+        text="", 
+        recording_color="#e81e1e", 
+        neutral_color="#00d4ff", 
+        icon_name="microphone", 
+        icon_size="2x"
+    )
+    
+    st.divider()
     uploaded_audio = st.file_uploader("Or upload an audio file:", type=["wav", "mp3", "m4a", "webm"])
 
 # --- 8. INITIALIZE SESSION ---
@@ -202,12 +214,13 @@ if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
     
     img_bytes = user_image.getvalue() if user_image else None
     
-    # Robust Audio Handling
+    # Audio Byte Management 
     audio_bytes = None
     audio_mime = "audio/wav"
     
-    if user_audio:
-        audio_bytes = user_audio.getvalue()
+    if recorded_audio_bytes:
+        # The new audio_recorder widget reliably outputs standard wav bytes
+        audio_bytes = recorded_audio_bytes
         audio_mime = "audio/wav"
     elif uploaded_audio:
         audio_bytes = uploaded_audio.getvalue()
