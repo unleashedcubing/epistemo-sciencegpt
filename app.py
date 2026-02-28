@@ -1,13 +1,14 @@
 import streamlit as st
 import os
 import time
+import re
 from pathlib import Path
 from google import genai
 from google.genai import types
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from io import BytesIO
 
@@ -107,30 +108,30 @@ def create_pdf(content, filename="Question_Paper.pdf"):
         if not line:
             story.append(Spacer(1, 0.15*inch))
             continue
+            
+        # 1. Escape special XML characters for ReportLab FIRST
+        line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
         
-        # Detect headers
+        # 2. Use regex to properly replace markdown bold/italics with XML tags
+        # Replaces **text** with <b>text</b>
+        line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
+        # Replaces *text* or _text_ with <i>text</i>
+        line = re.sub(r'(?<!\w)(?:_|\*)(.*?)(?:_|\*)(?!\w)', r'<i>\1</i>', line)
+        
+        # 3. Detect headers
         if line.startswith('# '):
-            text = line.replace('# ', '').strip()
+            text = line.replace('# ', '', 1).strip()
             story.append(Paragraph(text, title_style))
         elif line.startswith('## '):
-            text = line.replace('## ', '').strip()
+            text = line.replace('## ', '', 1).strip()
             story.append(Paragraph(text, heading_style))
         elif line.startswith('### '):
-            text = line.replace('### ', '').strip()
+            text = line.replace('### ', '', 1).strip()
             para = Paragraph(f"<b>{text}</b>", body_style)
             story.append(para)
-        # Detect bold markdown
-        elif '**' in line:
-            text = line.replace('**', '<b>').replace('**', '</b>')
-            story.append(Paragraph(text, body_style))
-        # Detect italic markdown
-        elif '*' in line or '_' in line:
-            text = line.replace('*', '<i>').replace('*', '</i>').replace('_', '<i>').replace('_', '</i>')
-            story.append(Paragraph(text, body_style))
         else:
-            # Escape special XML characters for reportlab
-            text = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            story.append(Paragraph(text, body_style))
+            # Render standard line (with inline bold/italics applied by regex)
+            story.append(Paragraph(line, body_style))
     
     # Add footer
     story.append(Spacer(1, 0.3*inch))
@@ -285,7 +286,6 @@ for idx, message in enumerate(st.session_state.messages):
         else:
             st.markdown(message["content"])
             
-            # Re-render any attachments the user sent previously
             if message.get("user_attachment_bytes"):
                 mime = message.get("user_attachment_mime", "")
                 name = message.get("user_attachment_name", "File")
@@ -296,11 +296,11 @@ for idx, message in enumerate(st.session_state.messages):
                 elif "text" in mime or name.endswith(".txt"):
                     st.caption(f"📝 *Attached Text Document: {name}*")
             
-            # --- PDF DOWNLOAD BUTTON (CRITICAL FEATURE) ---
+            # --- PDF DOWNLOAD BUTTON ---
             if message["role"] == "assistant" and message.get("is_downloadable"):
                 pdf_buffer = create_pdf(message["content"])
                 st.download_button(
-                    label="📥 Download as PDF",
+                    label="📥 Download Question Paper as PDF",
                     data=pdf_buffer,
                     file_name=f"Helix_Question_Paper_{idx}.pdf",
                     mime="application/pdf",
@@ -415,22 +415,24 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
             thinking_placeholder.empty()
             st.markdown(bot_text)
             
-            # Detect if this is a downloadable question paper
+            # Check if downloadable
             is_downloadable = any(keyword in bot_text.lower() for keyword in ["question paper", "quiz", "test", "assessment", "exam", "mark scheme"])
             
             bot_msg = {"role": "assistant", "content": bot_text, "is_downloadable": is_downloadable}
             st.session_state.messages.append(bot_msg)
             
-            # Show download button immediately if it's a question paper
             if is_downloadable:
-                pdf_buffer = create_pdf(bot_text)
-                st.download_button(
-                    label="📥 Download as PDF",
-                    data=pdf_buffer,
-                    file_name=f"Helix_Question_Paper_{len(st.session_state.messages)}.pdf",
-                    mime="application/pdf",
-                    key=f"download_current"
-                )
+                try:
+                    pdf_buffer = create_pdf(bot_text)
+                    st.download_button(
+                        label="📥 Download Question Paper as PDF",
+                        data=pdf_buffer,
+                        file_name=f"Helix_Question_Paper_{len(st.session_state.messages)}.pdf",
+                        mime="application/pdf",
+                        key=f"download_current"
+                    )
+                except Exception as pdf_err:
+                    st.error(f"Could not generate PDF: {pdf_err}")
 
             # Image Gen
             if "IMAGE_GEN:" in bot_text:
@@ -456,4 +458,3 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
         except Exception as e:
             thinking_placeholder.empty()
             st.error(f"Helix Error: {e}")
-
