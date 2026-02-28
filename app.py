@@ -1,6 +1,8 @@
 import streamlit as st
 import os
 import time
+import chromadb
+from pypdf import PdfReader
 from pathlib import Path
 from google import genai
 from google.genai import types
@@ -8,7 +10,6 @@ from google.genai import types
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 
-# --- 2. API CLIENT SETUP ---
 api_key = os.environ.get("GOOGLE_API_KEY")
 if not api_key:
     if "GOOGLE_API_KEY" in st.secrets:
@@ -23,35 +24,13 @@ except Exception as e:
     st.error(f"🚨 Failed to initialize Gemini Client: {e}")
     st.stop()
 
-# --- 3. THEME CSS & TITLE ---
+# --- 2. THEME CSS & TITLE ---
 st.markdown("""
 <style>
-.stApp {
-  background: radial-gradient(800px circle at 50% 0%, rgba(0, 212, 255, 0.08), rgba(0, 212, 255, 0.00) 60%), var(--background-color);
-  color: var(--text-color);
-}
-.big-title {
-  font-family: 'Inter', sans-serif;
-  color: #00d4ff;
-  text-align: center;
-  font-size: 48px;
-  font-weight: 1200;
-  letter-spacing: -3px;
-  margin-bottom: 0px;
-  text-shadow: 0 0 6px rgba(0, 212, 255, 0.55);
-}
-.subtitle {
-  text-align: center;
-  color: var(--text-color);
-  opacity: 0.60;
-  font-size: 18px;
-  margin-bottom: 30px;
-}
-.thinking-container {
-  display: flex; align-items: center; gap: 8px; padding: 12px 16px;
-  background-color: var(--secondary-background-color);
-  border-radius: 8px; margin: 10px 0; border-left: 3px solid #fc8404;
-}
+.stApp { background: radial-gradient(800px circle at 50% 0%, rgba(0, 212, 255, 0.08), rgba(0, 212, 255, 0.00) 60%), var(--background-color); color: var(--text-color); }
+.big-title { font-family: 'Inter', sans-serif; color: #00d4ff; text-align: center; font-size: 48px; font-weight: 1200; letter-spacing: -3px; margin-bottom: 0px; text-shadow: 0 0 6px rgba(0, 212, 255, 0.55); }
+.subtitle { text-align: center; opacity: 0.60; font-size: 18px; margin-bottom: 30px; }
+.thinking-container { display: flex; align-items: center; gap: 8px; padding: 12px 16px; background-color: var(--secondary-background-color); border-radius: 8px; margin: 10px 0; border-left: 3px solid #fc8404; }
 .thinking-text { color: #fc8404; font-size: 14px; font-weight: 600; }
 .thinking-dots { display: flex; gap: 4px; }
 .thinking-dot { width: 6px; height: 6px; border-radius: 50%; background-color: #fc8404; animation: thinking-pulse 1.4s infinite; }
@@ -60,182 +39,90 @@ st.markdown("""
 @keyframes thinking-pulse { 0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); } 30% { opacity: 1; transform: scale(1.2); } }
 </style>
 <div class="big-title">📚 helix.ai</div>
-<div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
+<div class="subtitle">Your AI Education Platform</div>
 """, unsafe_allow_html=True)
 
-# --- 4. HELPER: FORMAT FILE NAMES ---
+# --- 3. HELPER: FORMAT FILE NAMES ---
 def get_friendly_name(filename):
-    """Translates 'CIE_7_WB_Sci.pdf' into 'Cambridge Science Workbook 7'"""
-    if not filename: return "Cambridge Textbook"
+    if not filename: return "Textbook"
     name = filename.replace(".pdf", "").replace(".PDF", "")
     parts = name.split("_")
-    
     if len(parts) < 3 or parts[0] != "CIE": return filename
-        
-    grade = parts[1]
-    book_type = "Workbook" if "WB" in parts else "Textbook"
-    if "ANSWERS" in parts: book_type += " Answers"
-    
+    grade, book_type = parts[1], "Workbook" if "WB" in parts else "Textbook"
     subject = "Science" if "Sci" in parts else "Math" if "Math" in parts else "English" if "Eng" in parts else "Subject"
-    
-    part_str = ""
-    if "1" in parts[2:]: part_str = " (Part 1)"
-    if "2" in parts[2:]: part_str = " (Part 2)"
-    
-    return f"Cambridge {subject} {book_type} {grade}{part_str}"
+    return f"Cambridge {subject} {book_type} {grade}"
 
-# --- 5. SYSTEM INSTRUCTIONS ---
+# --- 4. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
-You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
+You are Helix, an advanced AI Educational Tutor.
 
 ### RULE 1: THE TWO-STEP SEARCH (CRITICAL)
-- STEP 1: You MUST search the attached PDF textbooks FIRST. If you find the answer, base your response on the book and cite it at the end like this: (Source: Cambridge Science Textbook 7). Do NOT include page numbers.
-- STEP 2: If (and ONLY if) the textbooks do not contain the answer, you must explicitly state: "I couldn't find this in your textbook, but here is what I found:" and then provide the best possible answer using your general knowledge or web search.
+- STEP 1: You MUST answer using the "Extracted Textbook Context" provided in the prompt. If you find the answer there, cite the book name provided in the context (e.g., "Source: Cambridge Science Textbook 7").
+- STEP 2: If the context does not contain the answer, you must state: "I couldn't find this in the textbook library, but here is what I know:" and use your general knowledge.
 
-### RULE 2: SOURCE PRIORITY & MCQ FORMAT
-- Use BOTH WB (Workbook) AND TB (Textbook) to provide a wide range of questions/answers.
-- In MCQs, ALWAYS randomize the options. Do not make all correct answers the same letter.
+### RULE 2: ASSESSMENTS
+- If asked for a quiz, generate Checkpoint-style formats (Paper 1 & 2), 50 marks. Put the citation ONLY ONCE at the very bottom.
 
-### RULE 3: STAGE 9 ENGLISH TB/WB (CRITICAL)
-- I couldn't find the TB/WB source for Stage 9 English, so you will go off of this table of contents:
-Chapter 1 • Writing to explore and reflect (1.1 What is travel writing?, 1.2 Selecting info, 1.3 Tone/register, 1.8 Creating account)
-Chapter 2 • Writing to inform and explain (2.1 Matching texts, 2.2 Formal/informal, 2.9 Encyclopedia entries)
-Chapter 3 • Writing to argue and persuade (3.1 Persuasive techniques, 3.6 Organising whole argument, 3.9 Argumentative essay)
-Chapter 4 • Descriptive writing (4.1 Atmospheres, 4.4 Images to inspire, 4.9 Powerful description)
-Chapter 5 • Narrative writing (5.1 Story openings, 5.2 Setting/atmosphere, 5.6 Suspense/climax, 5.10 Thriller)
-Chapter 6 • Writing to analyse and compare (6.1 Implicit meaning, 6.2 Plays, 6.5 Analysing two texts)
-Chapter 7 • Testing your skills (7.1-7.4 Reading and writing questions)
-
-### RULE 4: IMAGE GENERATION (STRICT)
-- IF THE USER ASKS FOR A NORMAL DIAGRAM (e.g., "diagram of a cell", infographic, mindmap), output ONLY this exact command:
+### RULE 3: IMAGE GENERATION
+- IF the user asks for a diagram, output ONLY this exact command:
   IMAGE_GEN: [A high-quality illustration of the topic, detailed, white background, with labels]
-
-### RULE 5: QUESTION PAPERS (CRITICAL FORMATTING)
-- CITATION RULE: When making a question paper/quiz, list the source(s) ONLY ONCE at the very bottom of the entire paper/test. Do NOT add citations after individual questions, and do NOT use page numbers.
-- Science: Paper 1 & 2 (50‑mark, ~45‑min). Structured questions "(3)", mixing knowledge/data handling. Includes investigation/practical skills & diagram tasks. Provide point-based mark scheme.
-- Mathematics: Paper 1 (non-calc) & Paper 2 (calc). 50 marks each. Cover arithmetic, algebra, geometry, data. Include multi-step word problems requiring "show working". Give answer key with method marks.
-- English: Paper 1 (Non‑fiction) & Paper 2 (Fiction). Original passages. Structured comprehension + one longer directed/creative writing task. Provide rubric (content/organisation/style).
-
-### RULE 6: ARMAAN STYLE
-- If a user asks to reply in "Armaan Style", explain in expert physicist/chemist/biologist/mathematician/writer terms, using complex, out-of-textbook vocabulary. You can simplify it if the user asks later.
 """
 
-# --- 6. ROBUST FILE UPLOADER & CACHING ---
+# --- 5. THE NEW "REAL RAG" ENGINE ---
 @st.cache_resource(show_spinner=False)
-def upload_textbooks():
-    target_filenames = [
-        "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
-        "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
-        "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
-        "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
-        "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf"
-    ]
-    
-    active_files = {"sci": [], "math": [], "eng": []}
-    
+def initialize_vector_db():
     msg_placeholder = st.empty()
+    
+    # Initialize Local ChromaDB
+    db_path = os.path.join(os.getcwd(), "helix_vector_db")
+    chroma_client = chromadb.PersistentClient(path=db_path)
+    collection = chroma_client.get_or_create_collection(name="textbooks")
+
+    # If DB already has data, load instantly!
+    if collection.count() > 0:
+        msg_placeholder.success(f"⚡ Connected to Vector Database! ({collection.count()} knowledge chunks loaded)")
+        time.sleep(2)
+        msg_placeholder.empty()
+        return collection
+
+    # If DB is empty, process the PDFs
     with msg_placeholder.chat_message("assistant"):
         st.markdown(f"""
         <div class="thinking-container">
-            <span class="thinking-text">🔄 Connecting to Library & Checking Google Servers...</span>
+            <span class="thinking-text">⚙️ Initializing Vector Database for the first time. This may take a few minutes...</span>
             <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
         </div>
         """, unsafe_allow_html=True)
 
-    # 1. Check existing files on Google's Server to prevent re-uploading
-    existing_server_files = {}
-    try:
-        for f in client.files.list():
-            if f.display_name:
-                existing_server_files[f.display_name.lower()] = f
-    except Exception as e:
-        print("Could not list server files:", e)
-
-    # 2. Get Local Files
-    try:
-        cwd = Path.cwd()
-        all_pdfs = list(cwd.rglob("*.pdf"))
-        pdf_map = {p.name.lower(): p for p in all_pdfs}
-    except Exception:
-        pdf_map = {}
-
-    # 3. Process
-    for target_name in target_filenames:
-        t_lower = target_name.lower()
-        
-        # Scenario A: Already uploaded to Gemini Server!
-        if t_lower in existing_server_files:
-            server_file = existing_server_files[t_lower]
-            if server_file.state.name == "ACTIVE":
-                if "sci" in t_lower: active_files["sci"].append(server_file)
-                elif "math" in t_lower: active_files["math"].append(server_file)
-                elif "eng" in t_lower: active_files["eng"].append(server_file)
-                continue
-
-        # Scenario B: Need to upload
-        found_path = pdf_map.get(t_lower)
-        if found_path:
-            try:
-                if found_path.stat().st_size == 0: continue
-                uploaded_file = client.files.upload(
-                    file=str(found_path),
-                    config={'mime_type': 'application/pdf', 'display_name': found_path.name}
+    pdf_files = list(Path.cwd().rglob("*.pdf"))
+    
+    for pdf_path in pdf_files:
+        friendly_name = get_friendly_name(pdf_path.name)
+        try:
+            reader = PdfReader(pdf_path)
+            full_text = ""
+            for page in reader.pages:
+                text = page.extract_text()
+                if text: full_text += text + "\n"
+            
+            # CHUNKING: Split text into 1000-character blocks
+            chunk_size = 1000
+            chunks = [full_text[i:i+chunk_size] for i in range(0, len(full_text), chunk_size)]
+            
+            # Add to ChromaDB (Chroma handles the embedding math locally automatically using its default fast model)
+            for i, chunk in enumerate(chunks):
+                collection.add(
+                    documents=[chunk],
+                    metadatas=[{"source": friendly_name}],
+                    ids=[f"{pdf_path.name}_chunk_{i}"]
                 )
-                
-                # Wait for API to process PDF (Max 180s)
-                start_time = time.time()
-                while uploaded_file.state.name == "PROCESSING":
-                    if time.time() - start_time > 180: break
-                    time.sleep(3)
-                    uploaded_file = client.files.get(name=uploaded_file.name)
-                
-                if uploaded_file.state.name == "ACTIVE":
-                    if "sci" in t_lower: active_files["sci"].append(uploaded_file)
-                    elif "math" in t_lower: active_files["math"].append(uploaded_file)
-                    elif "eng" in t_lower: active_files["eng"].append(uploaded_file)
-            except Exception:
-                continue
+        except Exception as e:
+            print(f"Skipped {pdf_path.name}: {e}")
 
     msg_placeholder.empty()
-    return active_files
+    return collection
 
-def select_relevant_books(query, file_dict):
-    """Smartly filters books so we don't overwhelm the AI with 20 textbooks at once."""
-    query = query.lower()
-    selected = []
-    
-    is_math = any(k in query for k in ["math", "algebra", "geometry", "calculate", "equation", "number"])
-    is_sci = any(k in query for k in ["science", "cell", "biology", "physics", "chemistry", "atom", "force"])
-    is_eng = any(k in query for k in ["english", "poem", "story", "essay", "writing", "grammar"])
-    
-    # Default to Math/Sci if unclear
-    if not is_math and not is_sci and not is_eng:
-        is_math, is_sci = True, True
-
-    stage_7 = any(k in query for k in ["stage 7", "grade 6"])
-    stage_8 = any(k in query for k in ["stage 8", "grade 7"])
-    stage_9 = any(k in query for k in ["stage 9", "grade 8"])
-    has_stage = stage_7 or stage_8 or stage_9
-
-    def add_books(subject_key, is_active):
-        if not is_active: return
-        for book in file_dict.get(subject_key, []):
-            name = (book.display_name or "").lower()
-            if has_stage:
-                if stage_7 and "cie_7" in name: selected.append(book)
-                if stage_8 and "cie_8" in name: selected.append(book)
-                if stage_9 and "cie_9" in name: selected.append(book)
-            else:
-                selected.append(book)
-
-    add_books("math", is_math)
-    add_books("sci", is_sci)
-    add_books("eng", is_eng)
-    
-    # Cap at 4 books to prevent AI token overload ignoring the books
-    return selected[:4] 
-
-# --- 7. HISTORY FORMATTING ---
+# --- 6. HISTORY FORMATTING ---
 def get_recent_history_contents(messages, max_messages=6):
     history_contents = []
     text_msgs = [m for m in messages if not m.get("is_image") and not m.get("is_greeting")]
@@ -244,20 +131,20 @@ def get_recent_history_contents(messages, max_messages=6):
         history_contents.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
     return history_contents
 
-# --- 8. INITIALIZE SESSION ---
+# --- 7. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant", 
-            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?",
+            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly AI tutor powered by Vector Retrieval! 📖\n\nI can search thousands of textbook pages instantly. What are we learning today?",
             "is_greeting": True
         }
     ]
 
-if "textbook_handles" not in st.session_state:
-    st.session_state.textbook_handles = upload_textbooks()
+if "vector_db" not in st.session_state:
+    st.session_state.vector_db = initialize_vector_db()
 
-# --- 9. DISPLAY CHAT ---
+# --- 8. DISPLAY CHAT ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
@@ -265,55 +152,62 @@ for message in st.session_state.messages:
         else:
             st.markdown(message["content"])
 
-# --- 10. MAIN LOOP ---
+# --- 9. MAIN LOOP ---
 if prompt := st.chat_input("Ask Helix a question..."):
     st.chat_message("user").markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
+        thinking_placeholder = st.empty()
+        thinking_placeholder.markdown(f"""
+            <div class="thinking-container">
+                <span class="thinking-text">🧠 Searching Vector Database...</span>
+                <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+            </div>
+        """, unsafe_allow_html=True)
+        
         try:
-            # Gather relevant files
-            relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
+            # 1. VECTOR SEARCH: Query ChromaDB for the 30 most relevant textbook chunks
+            results = st.session_state.vector_db.query(
+                query_texts=[prompt],
+                n_results=30
+            )
             
-            # Show the user exactly which books the AI is reading using friendly names
-            if relevant_books:
-                book_names = [get_friendly_name(b.display_name) for b in relevant_books]
-                st.caption(f"🔍 *Scanning: {', '.join(book_names)}*")
-            else:
-                st.caption("🔍 *No specific textbooks found for this query. Using general knowledge.*")
+            # 2. Extract the text and metadata (sources)
+            retrieved_chunks = results['documents'][0]
+            retrieved_sources = results['metadatas'][0]
+            
+            context_string = ""
+            unique_sources = set()
+            
+            for chunk, meta in zip(retrieved_chunks, retrieved_sources):
+                source_name = meta["source"]
+                unique_sources.add(source_name)
+                # Separating chunks clearly so Gemini understands the transitions
+                context_string += f"--- Source: {source_name} ---\n{chunk}\n\n"
 
-            thinking_placeholder = st.empty()
-            thinking_placeholder.markdown(f"""
-                <div class="thinking-container">
-                    <span class="thinking-text">🧠 Reading & Thinking...</span>
-                    <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
-                </div>
-            """, unsafe_allow_html=True)
+            # Update UI to show what it found instantly
+            if unique_sources:
+                st.caption(f"⚡ *Deep Scan Found Data In: {', '.join(unique_sources)}*")
+            else:
+                st.caption("⚡ *No precise vector match found. Using general knowledge.*")
+
             
             chat_history_contents = get_recent_history_contents(st.session_state.messages[:-1], max_messages=6)
             
-            # Build current prompt
-            current_prompt_parts = []
-            for book in relevant_books:
-                # Give the AI the Friendly Name so it cites it beautifully
-                friendly_name = get_friendly_name(book.display_name)
-                current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {friendly_name}]"))
-                current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type="application/pdf"))
+            # 3. Inject the retrieved vector context into Gemini's prompt
+            enhanced_prompt = f"Extracted Textbook Context:\n{context_string}\n\nUser Query: {prompt}\n\nPlease answer the query using ONLY the context above. If it's not in the context, use your general knowledge."
             
-            # TWO-STEP PROMPT INJECTION
-            enhanced_prompt = f"Please check the attached Cambridge textbooks for the answer to this query FIRST. If it is NOT in the books, answer using your general knowledge/web search.\n\nQuery: {prompt}"
-            current_prompt_parts.append(types.Part.from_text(text=enhanced_prompt))
-            
-            current_content = types.Content(role="user", parts=current_prompt_parts)
+            current_content = types.Content(role="user", parts=[types.Part.from_text(text=enhanced_prompt)])
             full_contents = chat_history_contents + [current_content]
 
-            # Generate (Temperature 0.4 and google_search active for out-of-book questions)
+            # 4. Generate Answer (Lightning Fast now!)
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash", 
                 contents=full_contents,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.4, 
+                    temperature=0.3, 
                     tools=[{"google_search": {}}]
                 )
             )
@@ -323,7 +217,7 @@ if prompt := st.chat_input("Ask Helix a question..."):
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
 
-            # Image Gen
+            # Image Gen logic
             if "IMAGE_GEN:" in bot_text:
                 try:
                     img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
@@ -345,7 +239,6 @@ if prompt := st.chat_input("Ask Helix a question..."):
                     st.error("Image generation failed.")
 
         except Exception as e:
+            thinking_placeholder.empty()
             st.error(f"Helix Error: {e}")
-            if "403" in str(e): st.warning("⚠️ Session expired. Refresh page.")
-            elif "429" in str(e): st.warning("⚠️ Too many requests. Please wait a moment.")
-            elif "400" in str(e): st.warning("⚠️ Request Error. Ensure the Google API key has File permissions enabled.")
+
