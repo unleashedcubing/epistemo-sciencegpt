@@ -354,7 +354,7 @@ for idx, message in enumerate(st.session_state.messages):
                 pass
 
 # --- 11. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
-if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
+if chat_input_data := st.chat_input("Ask Helix... (Click the plus icon to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
     
     prompt = chat_input_data.text
     uploaded_files = chat_input_data.files
