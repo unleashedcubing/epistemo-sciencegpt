@@ -6,7 +6,6 @@ from google import genai
 from google.genai import types
 
 # --- 1. SETUP & CONFIGURATION ---
-# Removed the sidebar expansion since we don't need a sidebar anymore!
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 
 api_key = os.environ.get("GOOGLE_API_KEY")
@@ -58,8 +57,8 @@ def get_friendly_name(filename):
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
-### RULE 1: THE VISION & RAG SEARCH (CRITICAL)
-- If the user provides an IMAGE, analyze it carefully (e.g., solve the math problem, identify the biology diagram).
+### RULE 1: THE MULTIMODAL & RAG SEARCH (CRITICAL)
+- If the user provides an IMAGE, PDF, or TXT file, analyze it carefully (e.g., solve the math problem, summarize notes, grade an essay).
 - You MUST search the attached PDF textbooks using OCR to verify your answers. Cite the book (Source: Cambridge Science Textbook 7).
 - If the answer is not in the books, explicitly state: "I couldn't find this in your textbook, but here is what I know:" and answer normally.
 
@@ -163,7 +162,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant", 
-            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! You can also **attach photos of your homework directly in the chat box below!** 📸\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?",
+            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! You can also **attach photos, PDFs, or Text files directly in the chat box below!** 📸📄\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?",
             "is_greeting": True
         }
     ]
@@ -178,32 +177,52 @@ for message in st.session_state.messages:
             st.image(message["content"])
         else:
             st.markdown(message["content"])
-            # Display the user's uploaded image if they attached one to this specific message
-            if message.get("user_image_bytes"):
-                st.image(message["user_image_bytes"], width=300)
+            
+            # Re-render any attachments the user sent previously
+            if message.get("user_attachment_bytes"):
+                mime = message.get("user_attachment_mime", "")
+                name = message.get("user_attachment_name", "File")
+                if "image" in mime:
+                    # Renders any standard image format natively supported by Streamlit
+                    st.image(message["user_attachment_bytes"], width=300)
+                elif "pdf" in mime:
+                    st.caption(f"📄 *Attached PDF Document: {name}*")
+                elif "text" in mime or name.endswith(".txt"):
+                    st.caption(f"📝 *Attached Text Document: {name}*")
 
 # --- 9. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
-# NEW FEATURE: accept_file=True puts the paperclip icon directly inside the chat bar!
-if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a photo!)", accept_file=True, file_type=["jpg", "jpeg", "png"]):
+# Added txt, webp, avif, and svg to the accepted file types!
+if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
     
-    # The new chat_input returns a dictionary when accept_file is True
     prompt = chat_input_data.text
     uploaded_files = chat_input_data.files
     
     user_msg_dict = {"role": "user", "content": prompt}
     
-    img_bytes = None
-    img_mime = None
+    file_bytes = None
+    file_mime = None
+    file_name = None
+    
     if uploaded_files and len(uploaded_files) > 0:
-        img_bytes = uploaded_files[0].getvalue()
-        img_mime = uploaded_files[0].type
-        user_msg_dict["user_image_bytes"] = img_bytes
+        file_bytes = uploaded_files[0].getvalue()
+        file_mime = uploaded_files[0].type
+        file_name = uploaded_files[0].name
+        
+        user_msg_dict["user_attachment_bytes"] = file_bytes
+        user_msg_dict["user_attachment_mime"] = file_mime
+        user_msg_dict["user_attachment_name"] = file_name
         
     st.session_state.messages.append(user_msg_dict)
     
     with st.chat_message("user"):
         st.markdown(prompt)
-        if img_bytes: st.image(img_bytes, width=300)
+        if file_bytes:
+            if "image" in file_mime:
+                st.image(file_bytes, width=300)
+            elif "pdf" in file_mime:
+                st.caption(f"📄 *Attached: {file_name}*")
+            elif "text/plain" in file_mime or file_name.endswith(".txt"):
+                st.caption(f"📝 *Attached: {file_name}*")
 
     with st.chat_message("assistant"):
         try:
@@ -225,18 +244,37 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
             
             current_prompt_parts = []
             
-            # Attach Image
-            if img_bytes:
-                current_prompt_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=img_mime))
+            # --- DYNAMIC ATTACHMENT PROCESSING ---
+            if file_bytes:
+                # Handle all Image Formats
+                if "image" in file_mime:
+                    current_prompt_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=file_mime))
+                # Handle PDFs
+                elif "pdf" in file_mime:
+                    temp_pdf_path = f"temp_user_upload_{int(time.time())}.pdf"
+                    with open(temp_pdf_path, "wb") as f:
+                        f.write(file_bytes)
+                    
+                    user_uploaded_pdf = client.files.upload(file=temp_pdf_path)
+                    
+                    while user_uploaded_pdf.state.name == "PROCESSING":
+                        time.sleep(1)
+                        user_uploaded_pdf = client.files.get(name=user_uploaded_pdf.name)
+                        
+                    current_prompt_parts.append(types.Part.from_uri(file_uri=user_uploaded_pdf.uri, mime_type="application/pdf"))
+                # Handle Text Files
+                elif "text/plain" in file_mime or file_name.endswith(".txt"):
+                    raw_text = file_bytes.decode("utf-8", errors="ignore")
+                    txt_prompt = f"--- Attached Text File ({file_name}) ---\n{raw_text}\n--- End of File ---\n"
+                    current_prompt_parts.append(types.Part.from_text(text=txt_prompt))
             
-            # Attach Books
+            # Attach Cambridge Books
             for book in relevant_books:
                 friendly_name = get_friendly_name(book.display_name)
                 current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {friendly_name}]"))
                 current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type="application/pdf"))
             
-            # Formulate the final instruction for this specific turn
-            enhanced_prompt = f"Please read the user query and look at the image (if provided). Check the attached Cambridge textbooks for syllabus accuracy.\n\nQuery: {prompt}"
+            enhanced_prompt = f"Please read the user query and look at the attached files (if provided). Check the attached Cambridge textbooks for syllabus accuracy.\n\nQuery: {prompt}"
             current_prompt_parts.append(types.Part.from_text(text=enhanced_prompt))
             
             current_content = types.Content(role="user", parts=current_prompt_parts)
@@ -245,13 +283,11 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
             history_contents = []
             text_msgs = [m for m in st.session_state.messages[:-1] if not m.get("is_image") and not m.get("is_greeting")]
             
-            # We now grab the last 7 messages for much deeper conversational context
             for msg in text_msgs[-7:]:
                 history_contents.append(types.Content(role="user" if msg["role"] == "user" else "model", parts=[types.Part.from_text(text=msg["content"])]))
             
             full_contents = history_contents + [current_content]
 
-            # Generate
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash", 
                 contents=full_contents,
