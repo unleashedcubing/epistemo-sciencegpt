@@ -236,8 +236,10 @@ if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
             if img_bytes:
                 current_prompt_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=user_image.type))
             if audio_bytes:
-                # Gemini can natively listen to wav files!
-                current_prompt_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"))
+                # Dynamically get the exact MIME type Streamlit recorded in (usually audio/wav or audio/webm)
+                audio_mime = user_audio.type if hasattr(user_audio, 'type') else "audio/wav"
+                current_prompt_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
+
             
             # Attach PDFs
             for book in relevant_books:
