@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import time
 import re
+import concurrent.futures
 from pathlib import Path
 from google import genai
 from google.genai import types
@@ -61,7 +62,23 @@ def get_friendly_name(filename):
     part_str = " (Part 1)" if "1" in parts[2:] else " (Part 2)" if "2" in parts[2:] else ""
     return f"Cambridge {subject} {book_type} {grade}{part_str}"
 
-# --- 4. PDF EXPORT FUNCTION (NOW SUPPORTS EMBEDDED IMAGES!) ---
+# --- 4. PARALLEL IMAGE GENERATOR ---
+def generate_single_image(desc):
+    """Generates a single image via Gemini API. Used in thread pool."""
+    try:
+        img_resp = client.models.generate_content(
+            model="gemini-3-pro-image-preview",
+            contents=[desc],
+            config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
+        )
+        for part in img_resp.parts:
+            if part.inline_data:
+                return part.inline_data.data
+    except Exception as e:
+        print(f"Image gen error: {e}")
+    return None
+
+# --- 5. PDF EXPORT FUNCTION ---
 def create_pdf(content, images=None, filename="Question_Paper.pdf"):
     """Convert markdown-style text and generated images to a clean PDF"""
     buffer = BytesIO()
@@ -77,7 +94,6 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
     lines = content.split('\n')
     start_index = 0
     
-    # Strip AI preamble
     for i, line in enumerate(lines):
         if line.strip().startswith('#'):
             start_index = i
@@ -91,7 +107,6 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
     for line in lines:
         stripped = line.strip()
         
-        # Strip trailing sources section
         if stripped.startswith("Source(s):") or stripped.startswith("**Source(s):**"):
             skip_section = True
             continue
@@ -101,15 +116,10 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
             else:
                 skip_section = False
         
-        # --- NEW AGGRESSIVE CLEANING ---
-        # 1. Remove standard (Source: ...) tags
         clean_line = re.sub(r'\s*\(Source:.*?\)', '', line)
-        # 2. Remove floating page numbers like ", page 158)" or ", page 31, 42)"
         clean_line = re.sub(r'^\s*,\s*page\s+[\d,\s]+\)', '', clean_line)
-        # 3. Remove leading asterisks from bullet points
         clean_line = re.sub(r'^\s*\*\s+', '', clean_line)
         
-        # If the line is empty after stripping out the page number, don't add it
         if not clean_line.strip() and line.strip(): 
             continue
             
@@ -123,21 +133,22 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
             story.append(Spacer(1, 0.15*inch))
             continue
             
-        # --- IMAGE INJECTION INTO PDF ---
         if "IMAGE_GEN:" in line_stripped:
             if images and img_idx < len(images):
-                try:
-                    img_stream = BytesIO(images[img_idx])
-                    rl_reader = ImageReader(img_stream)
-                    iw, ih = rl_reader.getSize()
-                    aspect = ih / float(iw)
-                    target_width = 5.0 * inch
-                    target_height = target_width * aspect
-                    story.append(Spacer(1, 0.15*inch))
-                    story.append(RLImage(img_stream, width=target_width, height=target_height))
-                    story.append(Spacer(1, 0.15*inch))
-                except Exception:
-                    pass
+                img_data = images[img_idx]
+                if img_data:  # Make sure the concurrent thread didn't fail
+                    try:
+                        img_stream = BytesIO(img_data)
+                        rl_reader = ImageReader(img_stream)
+                        iw, ih = rl_reader.getSize()
+                        aspect = ih / float(iw)
+                        target_width = 5.0 * inch
+                        target_height = target_width * aspect
+                        story.append(Spacer(1, 0.15*inch))
+                        story.append(RLImage(img_stream, width=target_width, height=target_height))
+                        story.append(Spacer(1, 0.15*inch))
+                    except Exception:
+                        pass
                 img_idx += 1
             continue
             
@@ -172,7 +183,7 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
     buffer.seek(0)
     return buffer
 
-# --- 5. SYSTEM INSTRUCTIONS (HIGHLY OPTIMIZED) ---
+# --- 6. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
@@ -207,7 +218,7 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 - If asked for "Armaan Style", explain in expert terms using complex vocabulary.
 """
 
-# --- 6. GOOGLE FILE API ---
+# --- 7. GOOGLE FILE API ---
 @st.cache_resource(show_spinner=False)
 def upload_textbooks():
     target_filenames = [
@@ -261,7 +272,7 @@ def upload_textbooks():
     msg_placeholder.empty()
     return active_files
 
-# --- 7. STRICT ROUTING LOGIC ---
+# --- 8. STRICT ROUTING LOGIC ---
 def select_relevant_books(query, file_dict):
     query = query.lower()
     selected = []
@@ -290,7 +301,7 @@ def select_relevant_books(query, file_dict):
     add_books("eng", is_eng)
     return selected[:3] 
 
-# --- 8. INITIALIZE SESSION ---
+# --- 9. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
@@ -303,17 +314,16 @@ if "messages" not in st.session_state:
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
 
-# --- 9. DISPLAY CHAT ---
+# --- 10. DISPLAY CHAT ---
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
         
-        # Display AI generated images inside the flow!
         if message.get("images"):
             for img_bytes in message["images"]:
-                st.image(img_bytes, width=400)
+                if img_bytes:
+                    st.image(img_bytes, width=400)
         
-        # Re-render any attachments the user sent previously
         if message.get("user_attachment_bytes"):
             mime = message.get("user_attachment_mime", "")
             name = message.get("user_attachment_name", "File")
@@ -324,7 +334,6 @@ for idx, message in enumerate(st.session_state.messages):
             elif "text" in mime or name.endswith(".txt"):
                 st.caption(f"📝 *Attached Text Document: {name}*")
         
-        # PDF Download Button
         if message["role"] == "assistant" and message.get("is_downloadable"):
             try:
                 pdf_buffer = create_pdf(message["content"], images=message.get("images", []))
@@ -338,7 +347,7 @@ for idx, message in enumerate(st.session_state.messages):
             except Exception:
                 pass
 
-# --- 10. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
+# --- 11. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
 if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
     
     prompt = chat_input_data.text
@@ -429,25 +438,24 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
             bot_text = text_response.text
             thinking_placeholder.empty()
 
-            # --- MASSIVE NEW FEATURE: GENERATING MULTIPLE IMAGES ---
+            # --- MASSIVE SPEED UP: CONCURRENT MULTI-THREADED IMAGE GENERATION ---
             img_prompts = re.findall(r'IMAGE_GEN:\s*\[(.*?)\]', bot_text)
             generated_images = []
             
             if img_prompts:
                 img_thinking = st.empty()
-                img_thinking.markdown("*🖌️ Painting diagrams & tables for the exam...*")
-                for desc in img_prompts:
-                    try:
-                        img_resp = client.models.generate_content(
-                            model="gemini-3-pro-image-preview",
-                            contents=[desc],
-                            config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
-                        )
-                        for part in img_resp.parts:
-                            if part.inline_data:
-                                generated_images.append(part.inline_data.data)
-                    except Exception:
-                        pass
+                img_thinking.markdown(f"""
+                    <div class="thinking-container">
+                        <span class="thinking-text">🖌️ Painting diagrams & tables...</span>
+                        <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # Execute all image requests SIMULTANEOUSLY in parallel!
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                    # Maps each prompt to the generator function
+                    generated_images = list(executor.map(generate_single_image, img_prompts))
+                    
                 img_thinking.empty()
 
             is_downloadable = any(keyword in bot_text.lower() for keyword in ["question paper", "quiz", "test", "assessment", "exam", "mark scheme"])
@@ -463,7 +471,8 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
             # Show on screen instantly
             st.markdown(bot_text)
             for img in generated_images:
-                st.image(img, caption="Generated by Helix")
+                if img:
+                    st.image(img, caption="Generated by Helix")
             
             # Generate the supercharged PDF with images embedded!
             if is_downloadable:
