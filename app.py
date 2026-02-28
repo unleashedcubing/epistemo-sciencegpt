@@ -211,7 +211,7 @@ for message in st.session_state.messages:
 
 # --- 9. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
 # Added txt, webp, avif, and svg to the accepted file types!
-if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
+if chat_input_data := st.chat_input("Ask Helix for diagrams, quizes and more... (Click the plus icon to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
     
     prompt = chat_input_data.text
     uploaded_files = chat_input_data.files
