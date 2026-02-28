@@ -94,7 +94,8 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
     lines = content.split('\n')
     start_index = 0
     
-    for i, line in enumerate(lines):
+    # Strip AI preamble SAFELY (only search the first 5 lines for a header)
+    for i, line in enumerate(lines[:5]):
         if line.strip().startswith('#'):
             start_index = i
             break
@@ -187,13 +188,13 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
     buffer.seek(0)
     return buffer
 
-# --- 6. SYSTEM INSTRUCTIONS (UPDATED FOR PDF TRIGGER) ---
+# --- 6. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
 ### RULE 1: THE VISION & RAG SEARCH (CRITICAL)
 - If the user provides an IMAGE, PDF, or TXT file, analyze it carefully.
-- STEP 1: Search the attached PDF textbooks using OCR FIRST.
+- STEP 1: Search the attached PDF textbooks using OCR FIRST. Cite the book at the end like this: (Source: Cambridge Science Textbook 7).
 - STEP 2: If the textbooks do not contain the answer, explicitly state: "I couldn't find this in your textbook, but here is what I found:"
 
 ### RULE 2: CONVERSATION MEMORY
@@ -205,6 +206,7 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 - MUST include visual, diagram-based questions. Generate the diagrams using the IMAGE_GEN command. Example: `IMAGE_GEN: [Detailed diagram of a plant cell, with clear label lines A, B, C for a science exam]`
 - NUMBERING: Keep numbering extremely clean and sequential (1., 2., 3.) and sub-questions as (a), (b), (c).
 - MARKS: Put the marks on the SAME LINE as the question text at the very end (e.g., "Describe the process of photosynthesis. [3]"), do NOT put marks on a new line.
+- CITATION RULE: List the source(s) ONLY ONCE at the very bottom of the entire paper.
 - **PDF TRIGGER (STRICT):** If, and ONLY IF, you have generated a full, formal Question Paper or Assessment, you MUST write the exact phrase `[PDF_READY]` at the very end of your response. Do NOT use this tag for normal conversations, answering single questions, or explaining concepts.
 
 ### RULE 4: STAGE 9 ENGLISH TB/WB
@@ -354,7 +356,7 @@ for idx, message in enumerate(st.session_state.messages):
                 pass
 
 # --- 11. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
-if chat_input_data := st.chat_input("Ask Helix... (Click the plus icon to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
+if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
     
     prompt = chat_input_data.text
     uploaded_files = chat_input_data.files
