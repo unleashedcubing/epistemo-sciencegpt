@@ -65,6 +65,7 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
 ### RULE 2: ASSESSMENTS
 - If making a question paper/quiz, list the source(s) ONLY ONCE at the very bottom.
+- Provide a point-based mark scheme.
 
 ### RULE 3: IMAGE GENERATION
 - IF THE USER ASKS FOR A DIAGRAM, output ONLY this exact command:
@@ -154,7 +155,7 @@ def select_relevant_books(query, file_dict):
     add_books("eng", is_eng)
     return selected[:3] 
 
-# --- 7. MULTIMODAL SIDEBAR (NEW) ---
+# --- 7. MULTIMODAL SIDEBAR (UPDATED FOR CLOUD STABILITY) ---
 with st.sidebar:
     st.title("📎 Multimodal Inputs")
     st.caption("Helix can see your homework and hear your questions!")
@@ -162,8 +163,12 @@ with st.sidebar:
     # Vision: Upload Photo
     user_image = st.file_uploader("📸 Upload a Photo", type=["jpg", "jpeg", "png"])
     
-    # Voice: Record Audio natively in Streamlit
-    user_audio = st.audio_input("🎤 Record Voice Question")
+    st.divider()
+    
+    # Voice: Give users two reliable options
+    st.write("🎤 **Ask via Voice**")
+    user_audio = st.audio_input("Record directly:")
+    uploaded_audio = st.file_uploader("Or upload an audio file:", type=["wav", "mp3", "m4a", "webm"])
 
 # --- 8. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
@@ -178,30 +183,36 @@ if "messages" not in st.session_state:
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
 
-# --- 9. DISPLAY CHAT (UPDATED FOR MEDIA) ---
+# --- 9. DISPLAY CHAT ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
-        # Show AI generated images
         if message.get("is_image"):
             st.image(message["content"])
         else:
             st.markdown(message["content"])
-            # Display user uploaded media back to them in the chat log
             if message.get("user_image"):
                 st.image(message["user_image"], width=300)
             if message.get("user_audio"):
                 st.audio(message["user_audio"])
 
 # --- 10. MAIN LOOP ---
-# Tip: Tell users they can just type "Audio" if they only want to send a voice note
 if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
     
-    # Save the user's message, plus any attached media
     user_msg_dict = {"role": "user", "content": prompt}
     
     img_bytes = user_image.getvalue() if user_image else None
-    audio_bytes = user_audio.getvalue() if user_audio else None
     
+    # Robust Audio Handling
+    audio_bytes = None
+    audio_mime = "audio/wav"
+    
+    if user_audio:
+        audio_bytes = user_audio.getvalue()
+        audio_mime = "audio/wav"
+    elif uploaded_audio:
+        audio_bytes = uploaded_audio.getvalue()
+        audio_mime = uploaded_audio.type
+
     if img_bytes: user_msg_dict["user_image"] = img_bytes
     if audio_bytes: user_msg_dict["user_audio"] = audio_bytes
         
@@ -235,37 +246,22 @@ if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
             # --- ATTACH MULTIMODAL INPUTS ---
             if img_bytes:
                 current_prompt_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=user_image.type))
-            
             if audio_bytes:
-                # Bulletproof Audio: Save it locally and upload it to Google's File API to bypass browser codec issues
-                temp_audio_path = "temp_user_audio.webm"
-                with open(temp_audio_path, "wb") as f:
-                    f.write(audio_bytes)
-                
-                # Upload directly to Gemini's server
-                uploaded_audio = client.files.upload(file=temp_audio_path)
-                
-                # Wait for Google to process the audio (usually instant)
-                while uploaded_audio.state.name == "PROCESSING":
-                    time.sleep(1)
-                    uploaded_audio = client.files.get(name=uploaded_audio.name)
-                
-                # Feed the processed audio URI to the AI
-                current_prompt_parts.append(types.Part.from_uri(file_uri=uploaded_audio.uri, mime_type=uploaded_audio.mime_type))
-
+                current_prompt_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
+            
             # Attach PDFs
             for book in relevant_books:
                 friendly_name = get_friendly_name(book.display_name)
                 current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {friendly_name}]"))
                 current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type="application/pdf"))
             
-            # Attach Text
+            # Attach Text Prompt
             enhanced_prompt = f"Please read the user query, look at the images (if provided), and listen to the audio (if provided). Check the attached Cambridge textbooks for syllabus accuracy.\n\nQuery: {prompt}"
             current_prompt_parts.append(types.Part.from_text(text=enhanced_prompt))
             
             current_content = types.Content(role="user", parts=current_prompt_parts)
             
-            # Formatting history (text only to save bandwidth, omitting giant files)
+            # Formatting history 
             history_contents = []
             text_msgs = [m for m in st.session_state.messages[:-1] if not m.get("is_image") and not m.get("is_greeting")]
             for msg in text_msgs[-4:]:
@@ -273,7 +269,7 @@ if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
             
             full_contents = history_contents + [current_content]
 
-            # Generate response
+            # Generate
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash", 
                 contents=full_contents,
@@ -312,3 +308,4 @@ if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
 
         except Exception as e:
             st.error(f"Helix Error: {e}")
+
