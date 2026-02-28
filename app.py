@@ -8,7 +8,8 @@ from google.genai import types
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image as RLImage
+from reportlab.lib.utils import ImageReader
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from io import BytesIO
 
@@ -60,50 +61,23 @@ def get_friendly_name(filename):
     part_str = " (Part 1)" if "1" in parts[2:] else " (Part 2)" if "2" in parts[2:] else ""
     return f"Cambridge {subject} {book_type} {grade}{part_str}"
 
-# --- 4. PDF EXPORT FUNCTION ---
-def create_pdf(content, filename="Question_Paper.pdf"):
-    """Convert markdown-style text to a clean PDF"""
+# --- 4. PDF EXPORT FUNCTION (NOW SUPPORTS EMBEDDED IMAGES!) ---
+def create_pdf(content, images=None, filename="Question_Paper.pdf"):
+    """Convert markdown-style text and generated images to a clean PDF"""
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=0.75*inch, leftMargin=0.75*inch, topMargin=0.75*inch, bottomMargin=0.75*inch)
     
     styles = getSampleStyleSheet()
-    
-    # Custom styles
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=18,
-        textColor='#00d4ff',
-        spaceAfter=12,
-        alignment=TA_CENTER,
-        fontName='Helvetica-Bold'
-    )
-    
-    heading_style = ParagraphStyle(
-        'CustomHeading',
-        parent=styles['Heading2'],
-        fontSize=14,
-        spaceAfter=10,
-        spaceBefore=10,
-        fontName='Helvetica-Bold'
-    )
-    
-    body_style = ParagraphStyle(
-        'CustomBody',
-        parent=styles['BodyText'],
-        fontSize=11,
-        spaceAfter=8,
-        alignment=TA_LEFT,
-        fontName='Helvetica'
-    )
+    title_style = ParagraphStyle('CustomTitle', parent=styles['Heading1'], fontSize=18, textColor='#00d4ff', spaceAfter=12, alignment=TA_CENTER, fontName='Helvetica-Bold')
+    heading_style = ParagraphStyle('CustomHeading', parent=styles['Heading2'], fontSize=14, spaceAfter=10, spaceBefore=10, fontName='Helvetica-Bold')
+    body_style = ParagraphStyle('CustomBody', parent=styles['BodyText'], fontSize=11, spaceAfter=8, alignment=TA_LEFT, fontName='Helvetica')
     
     story = []
     
-    # --- CRITICAL: CLEAN THE CONTENT ---
     lines = content.split('\n')
     start_index = 0
     
-    # 1. Remove AI preamble (everything before first # header)
+    # Strip AI preamble
     for i, line in enumerate(lines):
         if line.strip().startswith('#'):
             start_index = i
@@ -111,34 +85,25 @@ def create_pdf(content, filename="Question_Paper.pdf"):
             
     lines = lines[start_index:]
     
-    # 2. Clean citations and formatting
     cleaned_lines = []
     skip_section = False
     
     for line in lines:
         stripped = line.strip()
-        
-        # Detect the "Source(s):" section and skip it entirely
         if stripped.startswith("Source(s):") or stripped.startswith("**Source(s):**"):
             skip_section = True
             continue
-        
-        # Skip lines that are part of the source list (start with * or -)
         if skip_section:
             if not stripped or stripped.startswith("*") or stripped.startswith("-"):
                 continue
             else:
                 skip_section = False
         
-        # Remove inline source citations e.g. (Source: Cambridge Science Workbook 7)
         clean_line = re.sub(r'\s*\(Source:.*?\)', '', line)
-        
-        # Remove leading asterisks from bullet points in answers
         clean_line = re.sub(r'^\s*\*\s+', '', clean_line)
-        
         cleaned_lines.append(clean_line)
     
-    # 3. Build the PDF Structure
+    img_idx = 0
     for line in cleaned_lines:
         line_stripped = line.strip()
         
@@ -146,22 +111,34 @@ def create_pdf(content, filename="Question_Paper.pdf"):
             story.append(Spacer(1, 0.15*inch))
             continue
             
-        # Detect "Mark Scheme" and force page break before it
+        # --- NEW: IMAGE INJECTION INTO PDF ---
+        if "IMAGE_GEN:" in line_stripped:
+            if images and img_idx < len(images):
+                try:
+                    img_stream = BytesIO(images[img_idx])
+                    rl_reader = ImageReader(img_stream)
+                    iw, ih = rl_reader.getSize()
+                    aspect = ih / float(iw)
+                    target_width = 5.0 * inch
+                    target_height = target_width * aspect
+                    story.append(Spacer(1, 0.15*inch))
+                    story.append(RLImage(img_stream, width=target_width, height=target_height))
+                    story.append(Spacer(1, 0.15*inch))
+                except Exception:
+                    pass
+                img_idx += 1
+            continue
+            
         if "mark scheme" in line_stripped.lower() and line_stripped.startswith('#'):
             story.append(PageBreak())
-            # Make "Mark Scheme" an H1 (remove ## if present)
             text = re.sub(r'^#+\s*', '', line_stripped)
             story.append(Paragraph(text, title_style))
             continue
             
-        # Escape special XML characters for ReportLab
         line = line.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        
-        # Convert markdown bold/italics
         line = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', line)
         line = re.sub(r'(?<!\w)(?:_|\*)(.*?)(?:_|\*)(?!\w)', r'<i>\1</i>', line)
         
-        # Detect standard headers
         if line.startswith('# '):
             text = line.replace('# ', '', 1).strip()
             story.append(Paragraph(text, title_style))
@@ -175,7 +152,6 @@ def create_pdf(content, filename="Question_Paper.pdf"):
         else:
             story.append(Paragraph(line, body_style))
     
-    # Add footer
     story.append(Spacer(1, 0.3*inch))
     footer = Paragraph("<i>Generated by helix.ai - Your CIE Tutor</i>", body_style)
     story.append(footer)
@@ -184,44 +160,39 @@ def create_pdf(content, filename="Question_Paper.pdf"):
     buffer.seek(0)
     return buffer
 
-# --- 5. SYSTEM INSTRUCTIONS ---
+# --- 5. SYSTEM INSTRUCTIONS (HIGHLY OPTIMIZED) ---
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
 ### RULE 1: THE VISION & RAG SEARCH (CRITICAL)
-- If the user provides an IMAGE, PDF, or TXT file, analyze it carefully (e.g., solve the math problem, summarize their notes, grade their essay).
-- STEP 1: You MUST search the attached PDF textbooks using OCR FIRST. If you find the answer, base your response on the book and cite it at the end like this: (Source: Cambridge Science Textbook 7). Do NOT include page numbers.
-- STEP 2: If (and ONLY if) the textbooks do not contain the answer, you must explicitly state: "I couldn't find this in your textbook, but here is what I found:" and then provide the best possible answer using your general knowledge or web search.
+- If the user provides an IMAGE, PDF, or TXT file, analyze it carefully.
+- STEP 1: Search the attached PDF textbooks using OCR FIRST. Cite the book at the end like this: (Source: Cambridge Science Textbook 7).
+- STEP 2: If the textbooks do not contain the answer, explicitly state: "I couldn't find this in your textbook, but here is what I found:"
 
 ### RULE 2: CONVERSATION MEMORY
-- You have access to the recent conversation history. If the user asks "Can you explain that more?" or "Give me another example", look at your previous response and build upon it.
+- Build upon previous responses if the user asks for more details.
 
-### RULE 3: SOURCE PRIORITY & MCQ FORMAT
-- Use BOTH WB (Workbook) AND TB (Textbook) to provide a wide range of questions/answers.
-- In MCQs, ALWAYS randomize the options. Do not make all correct answers the same letter.
+### RULE 3: QUESTION PAPERS (CRITICAL FORMATTING)
+- DO NOT use Markdown tables (e.g. `| Property | Metal |`). Text tables will not render properly.
+- If a question requires a table, you MUST generate it as an image using the IMAGE_GEN command. Example: `IMAGE_GEN: [A clean, blank comparison table worksheet for metals and non-metals]`
+- MUST include visual, diagram-based questions. Generate the diagrams using the IMAGE_GEN command. Example: `IMAGE_GEN: [Detailed diagram of a plant cell, with clear label lines A, B, C for a science exam]`
+- NUMBERING: Keep numbering extremely clean and sequential (1., 2., 3.) and sub-questions as (a), (b), (c).
+- MARKS: Put the marks on the SAME LINE as the question text at the very end (e.g., "Describe the process of photosynthesis. [3]"), do NOT put marks on a new line.
+- CITATION RULE: List the source(s) ONLY ONCE at the very bottom of the entire paper.
 
-### RULE 4: STAGE 9 ENGLISH TB/WB (CRITICAL)
-- I couldn't find the TB/WB source for Stage 9 English, so you will go off of this table of contents:
-Chapter 1 • Writing to explore and reflect (1.1 What is travel writing?, 1.2 Selecting info, 1.3 Tone/register, 1.8 Creating account)
-Chapter 2 • Writing to inform and explain (2.1 Matching texts, 2.2 Formal/informal, 2.9 Encyclopedia entries)
-Chapter 3 • Writing to argue and persuade (3.1 Persuasive techniques, 3.6 Organising whole argument, 3.9 Argumentative essay)
-Chapter 4 • Descriptive writing (4.1 Atmospheres, 4.4 Images to inspire, 4.9 Powerful description)
-Chapter 5 • Narrative writing (5.1 Story openings, 5.2 Setting/atmosphere, 5.6 Suspense/climax, 5.10 Thriller)
-Chapter 6 • Writing to analyse and compare (6.1 Implicit meaning, 6.2 Plays, 6.5 Analysing two texts)
-Chapter 7 • Testing your skills (7.1-7.4 Reading and writing questions)
+### RULE 4: STAGE 9 ENGLISH TB/WB
+- Table of contents: Chapter 1-7 covers Writing to explore, inform, argue, descriptive, narrative, analyze.
 
-### RULE 5: IMAGE GENERATION (STRICT)
-- IF THE USER ASKS FOR A NORMAL DIAGRAM (e.g., "diagram of a cell", infographic, mindmap), output ONLY this exact command:
-  IMAGE_GEN: [A high-quality illustration of the topic, detailed, white background, with labels]
+### RULE 5: IMAGE GENERATION SYNTAX (STRICT)
+- To trigger image generation, output this EXACT command on its OWN NEW LINE:
+  IMAGE_GEN: [Detailed description of the image, educational, white background]
+- You can use MULTIPLE IMAGE_GEN commands throughout the paper for different tables and diagrams!
 
-### RULE 6: QUESTION PAPERS (CRITICAL FORMATTING)
-- CITATION RULE: When making a question paper/quiz, list the source(s) ONLY ONCE at the very bottom of the entire paper/test. Do NOT add citations after individual questions, and do NOT use page numbers.
-- Science: Paper 1 & 2 (50‑mark, ~45‑min). Structured questions "(3)", mixing knowledge/data handling. Includes investigation/practical skills & diagram tasks. Provide point-based mark scheme.
-- Mathematics: Paper 1 (non-calc) & Paper 2 (calc). 50 marks each. Cover arithmetic, algebra, geometry, data. Include multi-step word problems requiring "show working". Give answer key with method marks.
-- English: Paper 1 (Non‑fiction) & Paper 2 (Fiction). Original passages. Structured comprehension + one longer directed/creative writing task. Provide rubric (content/organisation/style).
+### RULE 6: MARK SCHEME
+- Put "## Mark Scheme" at the very bottom of the test. Do not use citation tags inside the mark scheme.
 
 ### RULE 7: ARMAAN STYLE
-- If a user asks to reply in "Armaan Style", explain in expert physicist/chemist/biologist/mathematician/writer terms, using complex, out-of-textbook vocabulary. You can simplify it if the user asks later.
+- If asked for "Armaan Style", explain in expert terms using complex vocabulary.
 """
 
 # --- 6. GOOGLE FILE API ---
@@ -323,52 +294,50 @@ if "textbook_handles" not in st.session_state:
 # --- 9. DISPLAY CHAT ---
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
-        if message.get("is_image"):
-            st.image(message["content"])
-        else:
-            st.markdown(message["content"])
-            
-            if message.get("user_attachment_bytes"):
-                mime = message.get("user_attachment_mime", "")
-                name = message.get("user_attachment_name", "File")
-                if "image" in mime:
-                    st.image(message["user_attachment_bytes"], width=300)
-                elif "pdf" in mime:
-                    st.caption(f"📄 *Attached PDF Document: {name}*")
-                elif "text" in mime or name.endswith(".txt"):
-                    st.caption(f"📝 *Attached Text Document: {name}*")
-            
-            # --- PDF DOWNLOAD BUTTON ---
-            if message["role"] == "assistant" and message.get("is_downloadable"):
-                try:
-                    pdf_buffer = create_pdf(message["content"])
-                    st.download_button(
-                        label="📥 Download Question Paper as PDF",
-                        data=pdf_buffer,
-                        file_name=f"Helix_Question_Paper_{idx}.pdf",
-                        mime="application/pdf",
-                        key=f"download_{idx}"
-                    )
-                except Exception:
-                    pass
+        st.markdown(message["content"])
+        
+        # Display AI generated images inside the flow!
+        if message.get("images"):
+            for img_bytes in message["images"]:
+                st.image(img_bytes, width=400)
+        
+        # Re-render any attachments the user sent previously
+        if message.get("user_attachment_bytes"):
+            mime = message.get("user_attachment_mime", "")
+            name = message.get("user_attachment_name", "File")
+            if "image" in mime:
+                st.image(message["user_attachment_bytes"], width=300)
+            elif "pdf" in mime:
+                st.caption(f"📄 *Attached PDF Document: {name}*")
+            elif "text" in mime or name.endswith(".txt"):
+                st.caption(f"📝 *Attached Text Document: {name}*")
+        
+        # PDF Download Button
+        if message["role"] == "assistant" and message.get("is_downloadable"):
+            try:
+                pdf_buffer = create_pdf(message["content"], images=message.get("images", []))
+                st.download_button(
+                    label="📥 Download Question Paper as PDF",
+                    data=pdf_buffer,
+                    file_name=f"Helix_Question_Paper_{idx}.pdf",
+                    mime="application/pdf",
+                    key=f"download_{idx}"
+                )
+            except Exception:
+                pass
 
 # --- 10. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
 if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
     
     prompt = chat_input_data.text
     uploaded_files = chat_input_data.files
-    
     user_msg_dict = {"role": "user", "content": prompt}
     
-    file_bytes = None
-    file_mime = None
-    file_name = None
-    
+    file_bytes, file_mime, file_name = None, None, None
     if uploaded_files and len(uploaded_files) > 0:
         file_bytes = uploaded_files[0].getvalue()
         file_mime = uploaded_files[0].type
         file_name = uploaded_files[0].name
-        
         user_msg_dict["user_attachment_bytes"] = file_bytes
         user_msg_dict["user_attachment_mime"] = file_mime
         user_msg_dict["user_attachment_name"] = file_name
@@ -378,12 +347,9 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
     with st.chat_message("user"):
         st.markdown(prompt)
         if file_bytes:
-            if "image" in file_mime:
-                st.image(file_bytes, width=300)
-            elif "pdf" in file_mime:
-                st.caption(f"📄 *Attached: {file_name}*")
-            elif "text/plain" in file_mime or file_name.endswith(".txt"):
-                st.caption(f"📝 *Attached: {file_name}*")
+            if "image" in file_mime: st.image(file_bytes, width=300)
+            elif "pdf" in file_mime: st.caption(f"📄 *Attached: {file_name}*")
+            elif "text/plain" in file_mime or file_name.endswith(".txt"): st.caption(f"📝 *Attached: {file_name}*")
 
     with st.chat_message("assistant"):
         try:
@@ -405,7 +371,6 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
             
             current_prompt_parts = []
             
-            # --- DYNAMIC ATTACHMENT PROCESSING ---
             if file_bytes:
                 if "image" in file_mime:
                     current_prompt_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=file_mime))
@@ -413,20 +378,15 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
                     temp_pdf_path = f"temp_user_upload_{int(time.time())}.pdf"
                     with open(temp_pdf_path, "wb") as f:
                         f.write(file_bytes)
-                    
                     user_uploaded_pdf = client.files.upload(file=temp_pdf_path)
-                    
                     while user_uploaded_pdf.state.name == "PROCESSING":
                         time.sleep(1)
                         user_uploaded_pdf = client.files.get(name=user_uploaded_pdf.name)
-                        
                     current_prompt_parts.append(types.Part.from_uri(file_uri=user_uploaded_pdf.uri, mime_type="application/pdf"))
                 elif "text/plain" in file_mime or file_name.endswith(".txt"):
                     raw_text = file_bytes.decode("utf-8", errors="ignore")
-                    txt_prompt = f"--- Attached Text File ({file_name}) ---\n{raw_text}\n--- End of File ---\n"
-                    current_prompt_parts.append(types.Part.from_text(text=txt_prompt))
+                    current_prompt_parts.append(types.Part.from_text(text=f"--- Attached Text File ({file_name}) ---\n{raw_text}\n--- End of File ---\n"))
             
-            # Attach Cambridge Books
             for book in relevant_books:
                 friendly_name = get_friendly_name(book.display_name)
                 current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {friendly_name}]"))
@@ -437,10 +397,8 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
             
             current_content = types.Content(role="user", parts=current_prompt_parts)
             
-            # --- EXPANDED MEMORY SYSTEM (7 Messages) ---
             history_contents = []
-            text_msgs = [m for m in st.session_state.messages[:-1] if not m.get("is_image") and not m.get("is_greeting")]
-            
+            text_msgs = [m for m in st.session_state.messages[:-1] if not m.get("is_greeting")]
             for msg in text_msgs[-7:]:
                 history_contents.append(types.Content(role="user" if msg["role"] == "user" else "model", parts=[types.Part.from_text(text=msg["content"])]))
             
@@ -458,17 +416,47 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
             
             bot_text = text_response.text
             thinking_placeholder.empty()
-            st.markdown(bot_text)
+
+            # --- MASSIVE NEW FEATURE: GENERATING MULTIPLE IMAGES ---
+            img_prompts = re.findall(r'IMAGE_GEN:\s*\[(.*?)\]', bot_text)
+            generated_images = []
             
-            # Check if downloadable
+            if img_prompts:
+                img_thinking = st.empty()
+                img_thinking.markdown("*🖌️ Painting diagrams & tables for the exam...*")
+                for desc in img_prompts:
+                    try:
+                        img_resp = client.models.generate_content(
+                            model="gemini-3-pro-image-preview",
+                            contents=[desc],
+                            config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
+                        )
+                        for part in img_resp.parts:
+                            if part.inline_data:
+                                generated_images.append(part.inline_data.data)
+                    except Exception:
+                        pass
+                img_thinking.empty()
+
             is_downloadable = any(keyword in bot_text.lower() for keyword in ["question paper", "quiz", "test", "assessment", "exam", "mark scheme"])
             
-            bot_msg = {"role": "assistant", "content": bot_text, "is_downloadable": is_downloadable}
+            bot_msg = {
+                "role": "assistant", 
+                "content": bot_text, 
+                "is_downloadable": is_downloadable,
+                "images": generated_images
+            }
             st.session_state.messages.append(bot_msg)
             
+            # Show on screen instantly
+            st.markdown(bot_text)
+            for img in generated_images:
+                st.image(img, caption="Generated by Helix")
+            
+            # Generate the supercharged PDF with images embedded!
             if is_downloadable:
                 try:
-                    pdf_buffer = create_pdf(bot_text)
+                    pdf_buffer = create_pdf(bot_text, images=generated_images)
                     st.download_button(
                         label="📥 Download Question Paper as PDF",
                         data=pdf_buffer,
@@ -478,27 +466,6 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
                     )
                 except Exception as pdf_err:
                     st.error(f"Could not generate PDF: {pdf_err}")
-
-            # Image Gen
-            if "IMAGE_GEN:" in bot_text:
-                try:
-                    img_desc = bot_text.split("IMAGE_GEN:")[1].strip().split("\n")[0]
-                    img_thinking = st.empty()
-                    img_thinking.markdown("*🖌️ Painting diagram...*")
-                    
-                    img_resp = client.models.generate_content(
-                        model="gemini-3-pro-image-preview",
-                        contents=[img_desc],
-                        config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
-                    )
-                    
-                    for part in img_resp.parts:
-                        if part.inline_data:
-                            st.image(part.inline_data.data, caption="Generated by Helix")
-                            st.session_state.messages.append({"role": "assistant", "content": part.inline_data.data, "is_image": True})
-                            img_thinking.empty()
-                except Exception:
-                    st.error("Image generation failed.")
 
         except Exception as e:
             thinking_placeholder.empty()
