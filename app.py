@@ -6,7 +6,8 @@ from google import genai
 from google.genai import types
 
 # --- 1. SETUP & CONFIGURATION ---
-st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered", initial_sidebar_state="expanded")
+# Removed the sidebar expansion since we don't need a sidebar anymore!
+st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 
 api_key = os.environ.get("GOOGLE_API_KEY")
 if not api_key:
@@ -62,11 +63,14 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 - You MUST search the attached PDF textbooks using OCR to verify your answers. Cite the book (Source: Cambridge Science Textbook 7).
 - If the answer is not in the books, explicitly state: "I couldn't find this in your textbook, but here is what I know:" and answer normally.
 
-### RULE 2: ASSESSMENTS
+### RULE 2: CONVERSATION MEMORY
+- You have access to the recent conversation history. If the user asks "Can you explain that more?" or "Give me another example", look at your previous response and build upon it.
+
+### RULE 3: ASSESSMENTS
 - If making a question paper/quiz, list the source(s) ONLY ONCE at the very bottom.
 - Provide a point-based mark scheme.
 
-### RULE 3: IMAGE GENERATION
+### RULE 4: IMAGE GENERATION
 - IF THE USER ASKS FOR A DIAGRAM, output ONLY this exact command:
   IMAGE_GEN: [A high-quality illustration of the topic, detailed, white background, with labels]
 """
@@ -154,20 +158,12 @@ def select_relevant_books(query, file_dict):
     add_books("eng", is_eng)
     return selected[:3] 
 
-# --- 7. SIDEBAR (VISION TOOL ONLY) ---
-with st.sidebar:
-    st.title("👁️ AI Vision Tool")
-    st.caption("Helix can analyze your worksheets!")
-    
-    st.write("**Upload Homework/Diagrams**")
-    user_image = st.file_uploader("Upload image here:", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
-
-# --- 8. INITIALIZE SESSION ---
+# --- 7. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant", 
-            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! 📚\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?",
+            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! You can also **attach photos of your homework directly in the chat box below!** 📸\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?",
             "is_greeting": True
         }
     ]
@@ -175,22 +171,33 @@ if "messages" not in st.session_state:
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
 
-# --- 9. DISPLAY CHAT ---
+# --- 8. DISPLAY CHAT ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         if message.get("is_image"):
             st.image(message["content"])
         else:
             st.markdown(message["content"])
-            if message.get("user_image"):
-                st.image(message["user_image"], width=300)
+            # Display the user's uploaded image if they attached one to this specific message
+            if message.get("user_image_bytes"):
+                st.image(message["user_image_bytes"], width=300)
 
-# --- 10. MAIN LOOP ---
-if prompt := st.chat_input("Ask Helix... (Tip: Try attaching a photo in the sidebar!)"):
+# --- 9. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
+# NEW FEATURE: accept_file=True puts the paperclip icon directly inside the chat bar!
+if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a photo!)", accept_file=True, file_type=["jpg", "jpeg", "png"]):
+    
+    # The new chat_input returns a dictionary when accept_file is True
+    prompt = chat_input_data.text
+    uploaded_files = chat_input_data.files
     
     user_msg_dict = {"role": "user", "content": prompt}
-    img_bytes = user_image.getvalue() if user_image else None
-    if img_bytes: user_msg_dict["user_image"] = img_bytes
+    
+    img_bytes = None
+    img_mime = None
+    if uploaded_files and len(uploaded_files) > 0:
+        img_bytes = uploaded_files[0].getvalue()
+        img_mime = uploaded_files[0].type
+        user_msg_dict["user_image_bytes"] = img_bytes
         
     st.session_state.messages.append(user_msg_dict)
     
@@ -218,26 +225,33 @@ if prompt := st.chat_input("Ask Helix... (Tip: Try attaching a photo in the side
             
             current_prompt_parts = []
             
+            # Attach Image
             if img_bytes:
-                current_prompt_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=user_image.type))
+                current_prompt_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=img_mime))
             
+            # Attach Books
             for book in relevant_books:
                 friendly_name = get_friendly_name(book.display_name)
                 current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {friendly_name}]"))
                 current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type="application/pdf"))
             
-            enhanced_prompt = f"Please read the user query and look at the images (if provided). Check the attached Cambridge textbooks for syllabus accuracy.\n\nQuery: {prompt}"
+            # Formulate the final instruction for this specific turn
+            enhanced_prompt = f"Please read the user query and look at the image (if provided). Check the attached Cambridge textbooks for syllabus accuracy.\n\nQuery: {prompt}"
             current_prompt_parts.append(types.Part.from_text(text=enhanced_prompt))
             
             current_content = types.Content(role="user", parts=current_prompt_parts)
             
+            # --- EXPANDED MEMORY SYSTEM (7 Messages) ---
             history_contents = []
             text_msgs = [m for m in st.session_state.messages[:-1] if not m.get("is_image") and not m.get("is_greeting")]
-            for msg in text_msgs[-4:]:
+            
+            # We now grab the last 7 messages for much deeper conversational context
+            for msg in text_msgs[-7:]:
                 history_contents.append(types.Content(role="user" if msg["role"] == "user" else "model", parts=[types.Part.from_text(text=msg["content"])]))
             
             full_contents = history_contents + [current_content]
 
+            # Generate
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash", 
                 contents=full_contents,
