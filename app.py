@@ -90,6 +90,8 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
     
     for line in lines:
         stripped = line.strip()
+        
+        # Strip trailing sources section
         if stripped.startswith("Source(s):") or stripped.startswith("**Source(s):**"):
             skip_section = True
             continue
@@ -99,8 +101,18 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
             else:
                 skip_section = False
         
+        # --- NEW AGGRESSIVE CLEANING ---
+        # 1. Remove standard (Source: ...) tags
         clean_line = re.sub(r'\s*\(Source:.*?\)', '', line)
+        # 2. Remove floating page numbers like ", page 158)" or ", page 31, 42)"
+        clean_line = re.sub(r'^\s*,\s*page\s+[\d,\s]+\)', '', clean_line)
+        # 3. Remove leading asterisks from bullet points
         clean_line = re.sub(r'^\s*\*\s+', '', clean_line)
+        
+        # If the line is empty after stripping out the page number, don't add it
+        if not clean_line.strip() and line.strip(): 
+            continue
+            
         cleaned_lines.append(clean_line)
     
     img_idx = 0
@@ -111,7 +123,7 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
             story.append(Spacer(1, 0.15*inch))
             continue
             
-        # --- NEW: IMAGE INJECTION INTO PDF ---
+        # --- IMAGE INJECTION INTO PDF ---
         if "IMAGE_GEN:" in line_stripped:
             if images and img_idx < len(images):
                 try:
@@ -372,101 +384,4 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
             current_prompt_parts = []
             
             if file_bytes:
-                if "image" in file_mime:
-                    current_prompt_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=file_mime))
-                elif "pdf" in file_mime:
-                    temp_pdf_path = f"temp_user_upload_{int(time.time())}.pdf"
-                    with open(temp_pdf_path, "wb") as f:
-                        f.write(file_bytes)
-                    user_uploaded_pdf = client.files.upload(file=temp_pdf_path)
-                    while user_uploaded_pdf.state.name == "PROCESSING":
-                        time.sleep(1)
-                        user_uploaded_pdf = client.files.get(name=user_uploaded_pdf.name)
-                    current_prompt_parts.append(types.Part.from_uri(file_uri=user_uploaded_pdf.uri, mime_type="application/pdf"))
-                elif "text/plain" in file_mime or file_name.endswith(".txt"):
-                    raw_text = file_bytes.decode("utf-8", errors="ignore")
-                    current_prompt_parts.append(types.Part.from_text(text=f"--- Attached Text File ({file_name}) ---\n{raw_text}\n--- End of File ---\n"))
-            
-            for book in relevant_books:
-                friendly_name = get_friendly_name(book.display_name)
-                current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {friendly_name}]"))
-                current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type="application/pdf"))
-            
-            enhanced_prompt = f"Please read the user query and look at the attached files (if provided). Check the attached Cambridge textbooks for syllabus accuracy.\n\nQuery: {prompt}"
-            current_prompt_parts.append(types.Part.from_text(text=enhanced_prompt))
-            
-            current_content = types.Content(role="user", parts=current_prompt_parts)
-            
-            history_contents = []
-            text_msgs = [m for m in st.session_state.messages[:-1] if not m.get("is_greeting")]
-            for msg in text_msgs[-7:]:
-                history_contents.append(types.Content(role="user" if msg["role"] == "user" else "model", parts=[types.Part.from_text(text=msg["content"])]))
-            
-            full_contents = history_contents + [current_content]
-
-            text_response = client.models.generate_content(
-                model="gemini-2.5-flash", 
-                contents=full_contents,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_INSTRUCTION,
-                    temperature=0.3, 
-                    tools=[{"google_search": {}}]
-                )
-            )
-            
-            bot_text = text_response.text
-            thinking_placeholder.empty()
-
-            # --- MASSIVE NEW FEATURE: GENERATING MULTIPLE IMAGES ---
-            img_prompts = re.findall(r'IMAGE_GEN:\s*\[(.*?)\]', bot_text)
-            generated_images = []
-            
-            if img_prompts:
-                img_thinking = st.empty()
-                img_thinking.markdown("*🖌️ Painting diagrams & tables for the exam...*")
-                for desc in img_prompts:
-                    try:
-                        img_resp = client.models.generate_content(
-                            model="gemini-3-pro-image-preview",
-                            contents=[desc],
-                            config=types.GenerateContentConfig(response_modalities=['TEXT', 'IMAGE'])
-                        )
-                        for part in img_resp.parts:
-                            if part.inline_data:
-                                generated_images.append(part.inline_data.data)
-                    except Exception:
-                        pass
-                img_thinking.empty()
-
-            is_downloadable = any(keyword in bot_text.lower() for keyword in ["question paper", "quiz", "test", "assessment", "exam", "mark scheme"])
-            
-            bot_msg = {
-                "role": "assistant", 
-                "content": bot_text, 
-                "is_downloadable": is_downloadable,
-                "images": generated_images
-            }
-            st.session_state.messages.append(bot_msg)
-            
-            # Show on screen instantly
-            st.markdown(bot_text)
-            for img in generated_images:
-                st.image(img, caption="Generated by Helix")
-            
-            # Generate the supercharged PDF with images embedded!
-            if is_downloadable:
-                try:
-                    pdf_buffer = create_pdf(bot_text, images=generated_images)
-                    st.download_button(
-                        label="📥 Download Question Paper as PDF",
-                        data=pdf_buffer,
-                        file_name=f"Helix_Question_Paper_{len(st.session_state.messages)}.pdf",
-                        mime="application/pdf",
-                        key=f"download_current"
-                    )
-                except Exception as pdf_err:
-                    st.error(f"Could not generate PDF: {pdf_err}")
-
-        except Exception as e:
-            thinking_placeholder.empty()
-            st.error(f"Helix Error: {e}")
+                if
