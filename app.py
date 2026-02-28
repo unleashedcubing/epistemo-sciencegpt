@@ -140,10 +140,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 4. SYSTEM INSTRUCTIONS ---
+# FIX: Removed the "If you are 90% sure... don't bother checking" clause. 
+# Replaced with strict grounding instructions so it ALWAYS reads your PDFs.
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
-***REMEMBER VERY IMPORTANT!!!!!: The moment you recieve the user prompt, wait 4 seconds and read the prompt fully. If you are 90% sure that the user's query is not related to the book sources, don't bother checking the books, answer based on internet/your own way. If you aren't sure, check the books.***
+***CRITICAL INSTRUCTION: ALWAYS search through and base your answers on the provided textbook files FIRST. Even if you already know the answer, you MUST use the textbooks to ensure your response aligns exactly with the Cambridge syllabus. Only use your general knowledge or the internet if the specific detail is absolutely missing from the provided books.***
 
 IMPORTANT: Make sure to make questions based on stage and chapter (if chapter is given)
 ALSO: The textbooks were too big, so I split each into 2. The names would have ..._1.pdf or ..._2.pdf. The ... area would have the year. Check both when queries come up.
@@ -246,7 +248,6 @@ def upload_textbooks():
     
     active_files = {"sci": [], "math": [], "eng": []}
     
-    # 🔴 Initial Loading State (Icon)
     status_placeholder = st.empty()
     status_placeholder.markdown("""
         <div class="status-indicator status-loading">
@@ -255,12 +256,11 @@ def upload_textbooks():
         </div>
         """, unsafe_allow_html=True)
 
-    # 💬 POP-UP MESSAGE
     msg_placeholder = st.empty()
     with msg_placeholder.chat_message("assistant"):
         st.markdown(f"""
         <div class="thinking-container">
-            <span class="thinking-text">🔄 Helix is loading your textbooks...</span>
+            <span class="thinking-text">🔄 Helix is loading your textbooks (this may take a few minutes)...</span>
             <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
         </div>
         """, unsafe_allow_html=True)
@@ -300,9 +300,10 @@ def upload_textbooks():
                 
                 for attempt in range(2):
                     try:
+                        # FIX: Bound the display name so Gemini knows the exact file it's reading
                         uploaded_file = client.files.upload(
                             file=found_path,
-                            config={'mime_type': 'application/pdf'}
+                            config={'mime_type': 'application/pdf', 'display_name': found_path.name}
                         )
                         upload_success = True
                         break
@@ -313,8 +314,9 @@ def upload_textbooks():
 
                 start_time = time.time()
                 while uploaded_file.state.name == "PROCESSING":
-                    if time.time() - start_time > 45: break
-                    time.sleep(1)
+                    # FIX: Increased timeout from 45s to 180s. Big PDFs take a long time to parse.
+                    if time.time() - start_time > 180: break
+                    time.sleep(2)
                     uploaded_file = client.files.get(name=uploaded_file.name)
                 
                 if uploaded_file.state.name == "ACTIVE":
@@ -328,18 +330,26 @@ def upload_textbooks():
             except Exception:
                 continue
 
-    # 🟢 Success State
-    status_placeholder.markdown("""
-        <div class="status-indicator status-ready" title="Books Ready!">
-            <span class="book-icon">📗</span>
-        </div>
-    """, unsafe_allow_html=True)
+    # FIX: Verify files ACTUALLY loaded before showing the success state.
+    total_loaded = sum(len(v) for v in active_files.values())
+    if total_loaded > 0:
+        status_placeholder.markdown(f"""
+            <div class="status-indicator status-ready" title="{total_loaded} Books Ready!">
+                <span class="book-icon">📗</span>
+            </div>
+        """, unsafe_allow_html=True)
+    else:
+        status_placeholder.markdown("""
+            <div class="status-indicator status-error" title="Books Failed to Process">
+                <span class="book-icon">⚠️</span>
+            </div>
+        """, unsafe_allow_html=True)
+
     msg_placeholder.empty()
         
     return active_files
 
 def select_relevant_books(query, file_dict):
-    """Selects relevant books based on keywords to save tokens."""
     query = query.lower()
     selected = []
     
@@ -389,34 +399,20 @@ def show_thinking_animation(message="Helix is thinking"):
     </div>
     """, unsafe_allow_html=True)
 
-
 # --- NEW: FORMAT HISTORY FOR GOOGLE GENAI SDK ---
 def get_recent_history_contents(messages, max_messages=8):
-    """
-    Grabs up to the last `max_messages` from Streamlit session state
-    and formats them as types.Content objects so Gemini has chat context.
-    Filters out any image generation messages or the initial greeting.
-    """
     history_contents = []
-    
-    # Exclude system messages or images, just grab raw text turns
     text_msgs = [m for m in messages if not m.get("is_image") and not m.get("is_greeting")]
-    
-    # Grab the last N messages
     recent_msgs = text_msgs[-max_messages:]
     
     for msg in recent_msgs:
-        # Map Streamlit roles to GenAI roles
         role = "user" if msg["role"] == "user" else "model"
-        
-        # Build the structured Content object
         history_contents.append(
             types.Content(
                 role=role,
                 parts=[types.Part.from_text(text=msg["content"])]
             )
         )
-        
     return history_contents
 
 
@@ -434,7 +430,6 @@ if "messages" not in st.session_state:
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
 else:
-    # Persist the green icon if already loaded
     st.markdown("""
         <div class="status-indicator status-ready" title="Books Ready!">
             <span class="book-icon">📗</span>
@@ -462,16 +457,20 @@ if prompt := st.chat_input("Ask Helix a question..."):
             # 1. Gather relevant file handles
             relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
             
-            # 2. Get past chat context natively formatted for GenAI
+            # 2. Get past chat context
             chat_history_contents = get_recent_history_contents(st.session_state.messages[:-1], max_messages=8)
             
             # 3. Create the *current* user prompt content object
-            # We bundle the PDFs with the user prompt in the final Content array
             current_prompt_parts = []
             for book in relevant_books:
+                # FIX: Explicitly tell Gemini which book it is looking at before attaching the URI
+                book_name = book.display_name or "Cambridge Textbook"
+                current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {book_name}]"))
                 current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type=book.mime_type))
             
-            current_prompt_parts.append(types.Part.from_text(text=prompt))
+            # FIX: Append an enforcing wrap to the prompt so it knows to use the books above.
+            enhanced_prompt = f"Using the provided textbooks above, answer the following query. Cite the textbook where applicable.\n\nQuery: {prompt}"
+            current_prompt_parts.append(types.Part.from_text(text=enhanced_prompt))
             
             current_content = types.Content(
                 role="user",
