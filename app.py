@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 
 # --- 1. SETUP & CONFIGURATION ---
-st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered", initial_sidebar_state="expanded")
+st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 
 # --- 2. API CLIENT SETUP ---
 api_key = os.environ.get("GOOGLE_API_KEY")
@@ -63,12 +63,33 @@ st.markdown("""
 <div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
 """, unsafe_allow_html=True)
 
-# --- 4. SYSTEM INSTRUCTIONS ---
+# --- 4. HELPER: FORMAT FILE NAMES ---
+def get_friendly_name(filename):
+    """Translates 'CIE_7_WB_Sci.pdf' into 'Cambridge Science Workbook 7'"""
+    if not filename: return "Cambridge Textbook"
+    name = filename.replace(".pdf", "").replace(".PDF", "")
+    parts = name.split("_")
+    
+    if len(parts) < 3 or parts[0] != "CIE": return filename
+        
+    grade = parts[1]
+    book_type = "Workbook" if "WB" in parts else "Textbook"
+    if "ANSWERS" in parts: book_type += " Answers"
+    
+    subject = "Science" if "Sci" in parts else "Math" if "Math" in parts else "English" if "Eng" in parts else "Subject"
+    
+    part_str = ""
+    if "1" in parts[2:]: part_str = " (Part 1)"
+    if "2" in parts[2:]: part_str = " (Part 2)"
+    
+    return f"Cambridge {subject} {book_type} {grade}{part_str}"
+
+# --- 5. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
 ### RULE 1: THE TWO-STEP SEARCH (CRITICAL)
-- STEP 1: You MUST search the attached PDF textbooks FIRST. If you find the answer, base your response on the book and cite it at the end (e.g., "Source: CIE_7_SB_1_Sci").
+- STEP 1: You MUST search the attached PDF textbooks FIRST. If you find the answer, base your response on the book and cite it at the end exactly like this: (Source: Cambridge Science Textbook 7, p. 42).
 - STEP 2: If (and ONLY if) the textbooks do not contain the answer, you must explicitly state: "I couldn't find this in your textbook, but here is what I found:" and then provide the best possible answer using your general knowledge or web search.
 
 ### RULE 2: SOURCE PRIORITY & MCQ FORMAT
@@ -99,7 +120,7 @@ Chapter 7 • Testing your skills (7.1-7.4 Reading and writing questions)
 - If a user asks to reply in "Armaan Style", explain in expert physicist/chemist/biologist/mathematician/writer terms, using complex, out-of-textbook vocabulary. You can simplify it if the user asks later.
 """
 
-# --- 5. ROBUST FILE UPLOADER & CACHING ---
+# --- 6. ROBUST FILE UPLOADER & CACHING ---
 @st.cache_resource(show_spinner=False)
 def upload_textbooks():
     target_filenames = [
@@ -214,7 +235,7 @@ def select_relevant_books(query, file_dict):
     # Cap at 4 books to prevent AI token overload ignoring the books
     return selected[:4] 
 
-# --- 6. HISTORY FORMATTING ---
+# --- 7. HISTORY FORMATTING ---
 def get_recent_history_contents(messages, max_messages=6):
     history_contents = []
     text_msgs = [m for m in messages if not m.get("is_image") and not m.get("is_greeting")]
@@ -223,7 +244,7 @@ def get_recent_history_contents(messages, max_messages=6):
         history_contents.append(types.Content(role=role, parts=[types.Part.from_text(text=msg["content"])]))
     return history_contents
 
-# --- 7. INITIALIZE SESSION ---
+# --- 8. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
@@ -235,18 +256,6 @@ if "messages" not in st.session_state:
 
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
-
-# --- 8. SIDEBAR LIBRARY STATUS ---
-with st.sidebar:
-    st.title("📚 Library Status")
-    st.write("Files successfully connected to Helix:")
-    total_loaded = 0
-    for subj, files in st.session_state.textbook_handles.items():
-        for f in files:
-            st.success(f.display_name or "Unknown PDF")
-            total_loaded += 1
-    if total_loaded == 0:
-        st.error("⚠️ No textbooks found! Please ensure PDFs are in the same folder as this script.")
 
 # --- 9. DISPLAY CHAT ---
 for message in st.session_state.messages:
@@ -266,9 +275,9 @@ if prompt := st.chat_input("Ask Helix a question..."):
             # Gather relevant files
             relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
             
-            # Show the user exactly which books the AI is reading for this prompt
+            # Show the user exactly which books the AI is reading using friendly names
             if relevant_books:
-                book_names = [b.display_name for b in relevant_books if b.display_name]
+                book_names = [get_friendly_name(b.display_name) for b in relevant_books]
                 st.caption(f"🔍 *Scanning: {', '.join(book_names)}*")
             else:
                 st.caption("🔍 *No specific textbooks found for this query. Using general knowledge.*")
@@ -286,9 +295,9 @@ if prompt := st.chat_input("Ask Helix a question..."):
             # Build current prompt
             current_prompt_parts = []
             for book in relevant_books:
-                # Provide the file URI to Gemini and tag the name so it can cite it
-                book_name = book.display_name or "Cambridge Textbook"
-                current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {book_name}]"))
+                # Give the AI the Friendly Name so it cites it beautifully
+                friendly_name = get_friendly_name(book.display_name)
+                current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {friendly_name}]"))
                 current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type="application/pdf"))
             
             # TWO-STEP PROMPT INJECTION
