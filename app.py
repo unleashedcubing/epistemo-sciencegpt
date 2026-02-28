@@ -1,10 +1,12 @@
 import streamlit as st
 import os
 import time
+import base64
 from pathlib import Path
 from google import genai
 from google.genai import types
-from audio_recorder_streamlit import audio_recorder # NEW IMPORT!
+from audio_recorder_streamlit import audio_recorder
+from gtts import gTTS
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered", initial_sidebar_state="expanded")
@@ -41,7 +43,7 @@ st.markdown("""
 <div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
 """, unsafe_allow_html=True)
 
-# --- 3. HELPER: FORMAT FILE NAMES ---
+# --- 3. HELPER FUNCTIONS ---
 def get_friendly_name(filename):
     if not filename: return "Cambridge Textbook"
     name = filename.replace(".pdf", "").replace(".PDF", "")
@@ -54,13 +56,37 @@ def get_friendly_name(filename):
     part_str = " (Part 1)" if "1" in parts[2:] else " (Part 2)" if "2" in parts[2:] else ""
     return f"Cambridge {subject} {book_type} {grade}{part_str}"
 
+def autoplay_audio(text):
+    """Converts AI text to speech and plays it automatically."""
+    try:
+        # Clean text so the AI doesn't read out markdown symbols like asterisks
+        clean_text = text.replace("*", "").replace("#", "")
+        # Remove image generation tags from being spoken
+        clean_text = clean_text.split("IMAGE_GEN:")[0].strip()
+        
+        tts = gTTS(clean_text, lang='en')
+        tts.save("response.mp3")
+        
+        with open("response.mp3", "rb") as f:
+            data = f.read()
+            b64 = base64.b64encode(data).decode()
+            
+        md = f"""
+            <audio autoplay="true" style="display:none;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+            </audio>
+            """
+        st.markdown(md, unsafe_allow_html=True)
+    except Exception as e:
+        pass # Silently fail if TTS encounters an error so it doesn't break the chat
+
 # --- 4. SYSTEM INSTRUCTIONS ---
 SYSTEM_INSTRUCTION = """
 You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
 ### RULE 1: THE MULTIMODAL & RAG SEARCH (CRITICAL)
 - If the user provides an IMAGE, analyze it carefully.
-- If the user provides AUDIO, listen to their question and answer it directly.
+- If the user provides AUDIO, listen to their question and answer it directly in a conversational, spoken tone.
 - You MUST search the attached PDF textbooks using OCR to verify your answers. Cite the book (Source: Cambridge Science Textbook 7).
 - If the answer is not in the books, say: "I couldn't find this in your textbook, but here is what I know:" and answer normally.
 
@@ -156,41 +182,46 @@ def select_relevant_books(query, file_dict):
     add_books("eng", is_eng)
     return selected[:3] 
 
-# --- 7. MULTIMODAL SIDEBAR (BULLETPROOF AUDIO FIX) ---
+# --- 7. SIDEBAR (VISION & VOICE MODE) ---
 with st.sidebar:
-    st.title("📎 Multimodal Inputs")
-    st.caption("Helix can see your homework and hear your questions!")
+    st.title("👁️ Vision & Voice")
     
-    # Vision: Upload Photo
-    user_image = st.file_uploader("📸 Upload a Photo", type=["jpg", "jpeg", "png"])
+    # Vision 
+    st.write("**1. Upload Homework (Optional)**")
+    user_image = st.file_uploader("Show Helix a problem:", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
     
     st.divider()
     
-    # Voice: Robust JavaScript-based recorder 
-    st.write("🎤 **Record a Voice Note**")
-    st.caption("Click to record, click again to stop.")
+    # Voice Mode
+    st.write("🎙️ **Voice Mode**")
+    st.caption("Click the mic, speak your question, then click again to send!")
     
-    # This widget returns raw bytes directly, bypassing websocket crashes!
-    recorded_audio_bytes = audio_recorder(
+    # The recorder widget
+    voice_bytes = audio_recorder(
         text="", 
         recording_color="#e81e1e", 
         neutral_color="#00d4ff", 
         icon_name="microphone", 
-        icon_size="2x"
+        icon_size="3x"
     )
     
-    st.divider()
-    uploaded_audio = st.file_uploader("Or upload an audio file:", type=["wav", "mp3", "m4a", "webm"])
+    # Toggle for AI speaking back
+    st.write("")
+    use_tts = st.toggle("🔊 AI Voice Response", value=True)
 
 # --- 8. INITIALIZE SESSION ---
 if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant", 
-            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor! You can now **upload photos** of your homework or **ask me questions using your voice** using the sidebar on the left! 📸🎤\n\nWhat are we learning today?",
+            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor! You can type in the chat box, or use **Voice Mode** in the sidebar to talk to me natively! 🗣️\n\nWhat are we learning today?",
             "is_greeting": True
         }
     ]
+
+# Keep track of the last voice note so it doesn't process the same one twice
+if "last_voice_bytes" not in st.session_state:
+    st.session_state.last_voice_bytes = None
 
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
@@ -207,38 +238,43 @@ for message in st.session_state.messages:
             if message.get("user_audio"):
                 st.audio(message["user_audio"])
 
-# --- 10. MAIN LOOP ---
-if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
-    
-    user_msg_dict = {"role": "user", "content": prompt}
-    
-    img_bytes = user_image.getvalue() if user_image else None
-    
-    # Audio Byte Management 
-    audio_bytes = None
-    audio_mime = "audio/wav"
-    
-    if recorded_audio_bytes:
-        # The new audio_recorder widget reliably outputs standard wav bytes
-        audio_bytes = recorded_audio_bytes
-        audio_mime = "audio/wav"
-    elif uploaded_audio:
-        audio_bytes = uploaded_audio.getvalue()
-        audio_mime = uploaded_audio.type
+# --- 10. MAIN LOGIC (AUTO-SEND) ---
+process_query = False
+user_msg_dict = {}
+prompt = ""
+img_bytes = user_image.getvalue() if user_image else None
+audio_to_send = None
 
+# Scenario A: User typed a message
+if text_prompt := st.chat_input("Ask Helix..."):
+    prompt = text_prompt
+    user_msg_dict = {"role": "user", "content": prompt}
     if img_bytes: user_msg_dict["user_image"] = img_bytes
-    if audio_bytes: user_msg_dict["user_audio"] = audio_bytes
-        
+    process_query = True
+
+# Scenario B: User used Voice Mode (Auto-triggers when recording stops)
+elif voice_bytes and voice_bytes != st.session_state.last_voice_bytes:
+    st.session_state.last_voice_bytes = voice_bytes  # Update tracker
+    prompt = "Listen to my voice message and answer my question."
+    user_msg_dict = {"role": "user", "content": "🎙️ *(Voice Message Sent)*"}
+    user_msg_dict["user_audio"] = voice_bytes
+    audio_to_send = voice_bytes
+    if img_bytes: user_msg_dict["user_image"] = img_bytes
+    process_query = True
+
+# Process the request if either A or B happened
+if process_query:
     st.session_state.messages.append(user_msg_dict)
     
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(user_msg_dict["content"])
         if img_bytes: st.image(img_bytes, width=300)
-        if audio_bytes: st.audio(audio_bytes)
+        if audio_to_send: st.audio(audio_to_send)
 
     with st.chat_message("assistant"):
         try:
-            relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
+            # We assume science as a default subject for voice if text parsing fails
+            relevant_books = select_relevant_books(prompt + " science", st.session_state.textbook_handles)
             
             if relevant_books:
                 book_names = [get_friendly_name(b.display_name) for b in relevant_books]
@@ -256,25 +292,21 @@ if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
             
             current_prompt_parts = []
             
-            # --- ATTACH MULTIMODAL INPUTS ---
             if img_bytes:
                 current_prompt_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=user_image.type))
-            if audio_bytes:
-                current_prompt_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
+            if audio_to_send:
+                current_prompt_parts.append(types.Part.from_bytes(data=audio_to_send, mime_type="audio/wav"))
             
-            # Attach PDFs
             for book in relevant_books:
                 friendly_name = get_friendly_name(book.display_name)
                 current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {friendly_name}]"))
                 current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type="application/pdf"))
             
-            # Attach Text Prompt
             enhanced_prompt = f"Please read the user query, look at the images (if provided), and listen to the audio (if provided). Check the attached Cambridge textbooks for syllabus accuracy.\n\nQuery: {prompt}"
             current_prompt_parts.append(types.Part.from_text(text=enhanced_prompt))
             
             current_content = types.Content(role="user", parts=current_prompt_parts)
             
-            # Formatting history 
             history_contents = []
             text_msgs = [m for m in st.session_state.messages[:-1] if not m.get("is_image") and not m.get("is_greeting")]
             for msg in text_msgs[-4:]:
@@ -282,7 +314,6 @@ if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
             
             full_contents = history_contents + [current_content]
 
-            # Generate
             text_response = client.models.generate_content(
                 model="gemini-2.5-flash", 
                 contents=full_contents,
@@ -297,6 +328,10 @@ if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
             thinking_placeholder.empty()
             st.markdown(bot_text)
             st.session_state.messages.append({"role": "assistant", "content": bot_text})
+
+            # Play AI Voice automatically if toggle is enabled
+            if use_tts:
+                autoplay_audio(bot_text)
 
             # Image Gen
             if "IMAGE_GEN:" in bot_text:
@@ -320,5 +355,5 @@ if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
                     st.error("Image generation failed.")
 
         except Exception as e:
+            thinking_placeholder.empty()
             st.error(f"Helix Error: {e}")
-
