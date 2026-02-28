@@ -235,12 +235,24 @@ if prompt := st.chat_input("Ask Helix... (Tip: Add a photo in the sidebar!)"):
             # --- ATTACH MULTIMODAL INPUTS ---
             if img_bytes:
                 current_prompt_parts.append(types.Part.from_bytes(data=img_bytes, mime_type=user_image.type))
-            if audio_bytes:
-                # Dynamically get the exact MIME type Streamlit recorded in (usually audio/wav or audio/webm)
-                audio_mime = user_audio.type if hasattr(user_audio, 'type') else "audio/wav"
-                current_prompt_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type=audio_mime))
-
             
+            if audio_bytes:
+                # Bulletproof Audio: Save it locally and upload it to Google's File API to bypass browser codec issues
+                temp_audio_path = "temp_user_audio.webm"
+                with open(temp_audio_path, "wb") as f:
+                    f.write(audio_bytes)
+                
+                # Upload directly to Gemini's server
+                uploaded_audio = client.files.upload(file=temp_audio_path)
+                
+                # Wait for Google to process the audio (usually instant)
+                while uploaded_audio.state.name == "PROCESSING":
+                    time.sleep(1)
+                    uploaded_audio = client.files.get(name=uploaded_audio.name)
+                
+                # Feed the processed audio URI to the AI
+                current_prompt_parts.append(types.Part.from_uri(file_uri=uploaded_audio.uri, mime_type=uploaded_audio.mime_type))
+
             # Attach PDFs
             for book in relevant_books:
                 friendly_name = get_friendly_name(book.display_name)
