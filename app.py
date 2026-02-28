@@ -194,7 +194,7 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 
 ### RULE 1: THE VISION & RAG SEARCH (CRITICAL)
 - If the user provides an IMAGE, PDF, or TXT file, analyze it carefully.
-- STEP 1: Search the attached PDF textbooks using OCR FIRST. Cite the book at the end like this: (Source: Cambridge Science Textbook 7).
+- STEP 1: Search the attached PDF textbooks using OCR FIRST.
 - STEP 2: If the textbooks do not contain the answer, explicitly state: "I couldn't find this in your textbook, but here is what I found:"
 
 ### RULE 2: CONVERSATION MEMORY
@@ -356,7 +356,7 @@ for idx, message in enumerate(st.session_state.messages):
                 pass
 
 # --- 11. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
-if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
+if chat_input_data := st.chat_input("Ask Helix... (Click the plus icon to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
     
     prompt = chat_input_data.text
     uploaded_files = chat_input_data.files
