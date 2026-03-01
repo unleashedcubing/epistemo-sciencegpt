@@ -6,13 +6,20 @@ import concurrent.futures
 from pathlib import Path
 from google import genai
 from google.genai import types
+
+# ReportLab PDF Imports
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Image as RLImage, Table, TableStyle
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from reportlab.lib import colors
 from io import BytesIO
+
+# Matplotlib Chart Imports
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
@@ -62,9 +69,9 @@ def get_friendly_name(filename):
     part_str = " (Part 1)" if "1" in parts[2:] else " (Part 2)" if "2" in parts[2:] else ""
     return f"Cambridge {subject} {book_type} {grade}{part_str}"
 
-# --- 4. PARALLEL IMAGE GENERATOR ---
+# --- 4. VISUAL GENERATORS (IMAGES & CHARTS) ---
 def generate_single_image(desc):
-    """Generates a single image via Gemini API. Used in thread pool."""
+    """Generates a single image via Gemini API."""
     try:
         img_resp = client.models.generate_content(
             model="gemini-3-pro-image-preview",
@@ -78,9 +85,48 @@ def generate_single_image(desc):
         print(f"Image gen error: {e}")
     return None
 
+def generate_pie_chart(data_str):
+    """Generates a perfectly accurate pie chart using pure Python Matplotlib."""
+    try:
+        labels, sizes = [], []
+        # Parse format like "Oxygen: 21, Nitrogen: 78"
+        for item in data_str.split(','):
+            if ':' in item:
+                k, v = item.split(':')
+                labels.append(k.strip())
+                # Strip any non-numeric characters (like % signs)
+                sizes.append(float(re.sub(r'[^\d\.]', '', v)))
+        
+        # Thread-safe matplotlib rendering
+        fig = Figure(figsize=(5, 5))
+        canvas = FigureCanvas(fig)
+        ax = fig.add_subplot(111)
+        
+        # Use Helix brand colors
+        theme_colors = ['#00d4ff', '#fc8404', '#2ecc71', '#9b59b6', '#f1c40f', '#e74c3c']
+        ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=140, 
+               colors=theme_colors[:len(labels)], textprops={'color': "black", 'fontsize': 10})
+        ax.axis('equal') 
+        
+        buf = BytesIO()
+        fig.savefig(buf, format='png', bbox_inches='tight', transparent=True)
+        return buf.getvalue()
+    except Exception as e:
+        print(f"Pie chart error: {e}")
+        return None
+
+def process_visual(prompt_data):
+    """Helper function to route the thread to the right generator"""
+    trigger_type, data = prompt_data
+    if trigger_type == "IMAGE_GEN":
+        return generate_single_image(data)
+    elif trigger_type == "PIE_CHART":
+        return generate_pie_chart(data)
+    return None
+
 # --- 5. PDF EXPORT FUNCTION ---
 def create_pdf(content, images=None, filename="Question_Paper.pdf"):
-    """Convert markdown-style text and generated images to a clean PDF"""
+    """Convert markdown-style text, tables, and generated visuals to a clean PDF"""
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=0.75*inch, leftMargin=0.75*inch, topMargin=0.75*inch, bottomMargin=0.75*inch)
     
@@ -90,7 +136,6 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
     body_style = ParagraphStyle('CustomBody', parent=styles['BodyText'], fontSize=11, spaceAfter=8, alignment=TA_LEFT, fontName='Helvetica')
     
     story = []
-    
     lines = content.split('\n')
     start_index = 0
     
@@ -101,17 +146,13 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
             break
             
     lines = lines[start_index:]
-    
     cleaned_lines = []
     skip_section = False
     
     for line in lines:
         stripped = line.strip()
-        
-        # Stop completely if we hit the hidden trigger tag
         if "[PDF_READY]" in stripped:
             continue
-            
         if stripped.startswith("Source(s):") or stripped.startswith("**Source(s):**"):
             skip_section = True
             continue
@@ -124,37 +165,65 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
         clean_line = re.sub(r'\s*\(Source:.*?\)', '', line)
         clean_line = re.sub(r'^\s*,\s*page\s+[\d,\s]+\)', '', clean_line)
         clean_line = re.sub(r'^\s*\*\s+', '', clean_line)
-        
         if not clean_line.strip() and line.strip(): 
             continue
-            
         cleaned_lines.append(clean_line)
     
     img_idx = 0
+    table_data = [] # Stores rows for our markdown tables
+    
+    def render_pending_table():
+        if table_data:
+            t = Table(table_data)
+            t.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#00d4ff')), # Helix Blue Header
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f8f9fa')),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ]))
+            story.append(t)
+            story.append(Spacer(1, 0.2*inch))
+            table_data.clear()
+
     for line in cleaned_lines:
         line_stripped = line.strip()
         
+        # TABLE DETECTION
+        if line_stripped.startswith('|') and line_stripped.endswith('|'):
+            cells = [cell.strip() for cell in line_stripped.split('|')][1:-1]
+            # Ignore markdown separator lines like |---|---|
+            if not all(re.match(r'^:?-+:?$', c) for c in cells if c):
+                # Wrap text in Paragraphs so long cell text wraps nicely
+                row_elements = [Paragraph(c.replace('**', '<b>').replace('**', '</b>'), body_style) for c in cells]
+                table_data.append(row_elements)
+            continue
+        else:
+            render_pending_table()
+            
         if not line_stripped:
             story.append(Spacer(1, 0.15*inch))
             continue
             
-        if "IMAGE_GEN:" in line_stripped:
-            if images and img_idx < len(images):
-                img_data = images[img_idx]
-                if img_data:  # Make sure the concurrent thread didn't fail
-                    try:
-                        img_stream = BytesIO(img_data)
-                        rl_reader = ImageReader(img_stream)
-                        iw, ih = rl_reader.getSize()
-                        aspect = ih / float(iw)
-                        target_width = 5.0 * inch
-                        target_height = target_width * aspect
-                        story.append(Spacer(1, 0.15*inch))
-                        story.append(RLImage(img_stream, width=target_width, height=target_height))
-                        story.append(Spacer(1, 0.15*inch))
-                    except Exception:
-                        pass
-                img_idx += 1
+        # IMAGE & CHART DETECTION
+        if "IMAGE_GEN:" in line_stripped or "PIE_CHART:" in line_stripped:
+            if images and img_idx < len(images) and images[img_idx]:
+                try:
+                    img_stream = BytesIO(images[img_idx])
+                    rl_reader = ImageReader(img_stream)
+                    iw, ih = rl_reader.getSize()
+                    aspect = ih / float(iw)
+                    target_width = 4.5 * inch
+                    target_height = target_width * aspect
+                    story.append(Spacer(1, 0.15*inch))
+                    story.append(RLImage(img_stream, width=target_width, height=target_height))
+                    story.append(Spacer(1, 0.15*inch))
+                except Exception:
+                    pass
+            img_idx += 1
             continue
             
         if "mark scheme" in line_stripped.lower() and line_stripped.startswith('#'):
@@ -180,6 +249,7 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
         else:
             story.append(Paragraph(line, body_style))
     
+    render_pending_table() # Render a table if it was the last thing in the document
     story.append(Spacer(1, 0.3*inch))
     footer = Paragraph("<i>Generated by helix.ai - Your CIE Tutor</i>", body_style)
     story.append(footer)
@@ -201,135 +271,90 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 - Build upon previous responses if the user asks for more details.
 
 ### RULE 3: QUESTION PAPERS (CRITICAL FORMATTING)
-- DO NOT use Markdown tables (e.g. `| Property | Metal |`). Text tables will not render properly.
-- If a question requires a table, you MUST generate it as an image using the IMAGE_GEN command. Example: `IMAGE_GEN: [A clean, blank comparison table worksheet for metals and non-metals]`
-- MUST include visual, diagram-based questions. Generate the diagrams using the IMAGE_GEN command. Example: `IMAGE_GEN: [Detailed diagram of a plant cell, with clear label lines A, B, C for a science exam]`
+- For tables, ALWAYS use standard Markdown tables (e.g., `| Property | Metal |`). Do not use IMAGE_GEN for tables. Streamlit and the PDF exporter will render them beautifully.
+- MUST include visual, diagram-based questions. Generate diagrams using IMAGE_GEN or PIE_CHART commands.
 - NUMBERING: Keep numbering extremely clean and sequential (1., 2., 3.) and sub-questions as (a), (b), (c).
-- MARKS: Put the marks on the SAME LINE as the question text at the very end (e.g., "Describe the process of photosynthesis. [3]"), do NOT put marks on a new line.
+- MARKS: Put the marks on the SAME LINE as the question text at the very end (e.g., "Describe the process. [3]").
 - CITATION RULE: List the source(s) ONLY ONCE at the very bottom of the entire paper.
-- **PDF TRIGGER (STRICT):** If, and ONLY IF, you have generated a full, formal Question Paper or Assessment, you MUST write the exact phrase `[PDF_READY]` at the very end of your response. Do NOT use this tag for normal conversations, answering single questions, or explaining concepts.
+- **PDF TRIGGER (STRICT):** If, and ONLY IF, you have generated a full, formal Question Paper or Assessment, you MUST write the exact phrase `[PDF_READY]` at the very end of your response.
 
 ### RULE 4: STAGE 9 ENGLISH TB/WB
 I couldn't find the textbooks and workbooks for Stage 9 English, so here is a table of contents that you will refer to when answering a query for that chapter:
 Chapter 1 • Writing to explore and reflect
 1.1 What is travel writing?
-
 1.2 Selecting and noting key information in travel texts
-
 1.3 Comparing tone and register in travel texts
-
 1.4 Responding to travel writing
-
 1.5 Understanding grammatical choices in travel writing
-
 1.6 Varying sentences for effect
-
 1.7 Boost your vocabulary
-
 1.8 Creating a travel account
 
 Chapter 2 • Writing to inform and explain
 2.1 Matching informative texts to audience and purpose
-
 2.2 Using formal and informal language in information texts
-
 2.3 Comparing information texts
-
 2.4 Using discussion to prepare for a written assignment
-
 2.5 Planning information texts to suit different audiences
-
 2.6 Shaping paragraphs to suit audience and purpose
-
 2.7 Crafting sentences for a range of effects
-
 2.8 Making explanations precise and concise
-
 2.9 Writing encyclopedia entries
 
 Chapter 3 • Writing to argue and persuade
 3.1 Reviewing persuasive techniques
-
 3.2 Commenting on use of language to persuade
-
 3.3 Exploring layers of persuasive language
-
 3.4 Responding to the use of persuasive language
-
 3.5 Adapting grammar choices to create effects in argument writing
-
 3.6 Organising a whole argument effectively
-
 3.7 Organising an argument within each paragraph
-
 3.8 Presenting and responding to a question
-
 3.9 Producing an argumentative essay
 
 Chapter 4 • Descriptive writing
 4.1 Analysing how atmospheres are created
-
 4.2 Developing analysis of a description
-
 4.3 Analysing atmospheric descriptions
-
 4.4 Using images to inspire description
-
 4.5 Using language to develop an atmosphere
-
 4.6 Sustaining a cohesive atmosphere
-
 4.7 Creating atmosphere through punctuation
-
 4.8 Using structural devices to build up atmosphere
-
 4.9 Producing a powerful description
 
 Chapter 5 • Narrative writing
 5.1 Understanding story openings
-
 5.2 Exploring setting and atmosphere
-
 5.3 Introducing characters in stories
-
 5.4 Responding to powerful narrative
-
 5.5 Pitching a story
-
 5.6 Creating narrative suspense and climax
-
 5.7 Creating character
-
 5.8 Using tenses in narrative
-
 5.9 Using pronouns and sentence order for effect
-
 5.10 Creating a thriller
 
 Chapter 6 • Writing to analyse and compare
 6.1 Analysing implicit meaning in non-fiction texts
-
 6.2 Analysing how a play's key elements create different effects
-
 6.3 Using discussion skills to analyse carefully
-
 6.4 Comparing effectively through punctuation and grammar
-
 6.5 Analysing two texts
 
 Chapter 7 • Testing your skills
 7.1 Reading and writing questions on non-fiction texts
-
 7.2 Reading and writing questions on fiction texts
-
 7.3 Assessing your progress: non-fiction reading and writing
-
 7.4 Assessing your progress: fiction reading and writing
 
-### RULE 5: IMAGE GENERATION SYNTAX (STRICT)
-- To trigger image generation, output this EXACT command on its OWN NEW LINE:
+### RULE 5: DIAGRAMS AND CHARTS SYNTAX (STRICT)
+- For complex visual diagrams or illustrations, output this EXACT command on a NEW LINE:
   IMAGE_GEN: [Detailed description of the image, educational, white background]
-- You can use MULTIPLE IMAGE_GEN commands throughout the paper for different tables and diagrams!
+- For Pie Charts, DO NOT use IMAGE_GEN. Output this EXACT command on a NEW LINE:
+  PIE_CHART: [Label1:Value1, Label2:Value2]
+  Example: PIE_CHART: [Nitrogen:78, Oxygen:21, Argon:1]
+- You can use multiple visuals throughout the paper!
 
 ### RULE 6: MARK SCHEME
 - Put "## Mark Scheme" at the very bottom of the test. Do not use citation tags inside the mark scheme.
@@ -560,21 +585,22 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload
             bot_text = text_response.text
             thinking_placeholder.empty()
 
-            # --- CONCURRENT MULTI-THREADED IMAGE GENERATION ---
-            img_prompts = re.findall(r'IMAGE_GEN:\s*\[(.*?)\]', bot_text)
+            # --- CONCURRENT VISUAL GENERATION (IMAGES & CHARTS) ---
+            # Finds both IMAGE_GEN and PIE_CHART in the exact order they appear
+            visual_prompts = re.findall(r'(IMAGE_GEN|PIE_CHART):\s*\[(.*?)\]', bot_text)
             generated_images = []
-            
-            if img_prompts:
+
+            if visual_prompts:
                 img_thinking = st.empty()
                 img_thinking.markdown(f"""
                     <div class="thinking-container">
-                        <span class="thinking-text">🖌️ Painting diagrams & tables...</span>
+                        <span class="thinking-text">🖌️ Processing diagrams & charts...</span>
                         <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
                     </div>
                 """, unsafe_allow_html=True)
                 
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                    generated_images = list(executor.map(generate_single_image, img_prompts))
+                    generated_images = list(executor.map(process_visual, visual_prompts))
                     
                 img_thinking.empty()
 
