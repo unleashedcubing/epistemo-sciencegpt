@@ -68,7 +68,7 @@ st.markdown("""
 
 
 # -----------------------------
-# 3) HELPERS
+# 3) HELPERS & LATEX CLEANER
 # -----------------------------
 def get_friendly_name(filename: str) -> str:
     if not filename:
@@ -87,55 +87,54 @@ def get_friendly_name(filename: str) -> str:
 
 
 def safe_response_text(resp) -> str:
-    """
-    Make bot_text ALWAYS a string (never None), even when the model returns no text.
-    Also handles cases where resp.text raises.
-    """
-    # 1) Fast path
+    """Make bot_text ALWAYS a string, preventing NoneType crashes."""
     try:
         t = getattr(resp, "text", None)
-        if t:
-            return str(t)
+        if t: return str(t)
     except Exception:
         pass
-
-    # 2) Fallback: candidates -> content.parts -> text
     try:
         cands = getattr(resp, "candidates", None) or []
         if cands:
             content = getattr(cands[0], "content", None)
             parts = getattr(content, "parts", None) or []
-            texts = []
-            for p in parts:
-                tx = getattr(p, "text", None)
-                if tx:
-                    texts.append(tx)
-            if texts:
-                return "\n".join(texts)
+            texts = [getattr(p, "text", None) for p in parts if getattr(p, "text", None)]
+            if texts: return "\n".join(texts)
     except Exception:
         pass
-
     return ""
 
 
 def md_inline_to_rl(text: str) -> str:
     """
-    Minimal Markdown-ish to ReportLab Paragraph markup:
-    - Escapes &,<,>
-    - **bold** -> <b>bold</b>
-    - *italics* -> <i>italics</i>  (simple; avoids underscores)
+    Translates basic markdown to ReportLab format and CLEANS LATEX MATH!
+    Strips out backslashes and formulas so the PDF doesn't break.
     """
     if text is None:
         return ""
     s = str(text)
+    
+    # 1) Clean up stray LaTeX block delimiters
+    s = s.replace(r'\(', '').replace(r'\)', '')
+    s = s.replace(r'\[', '').replace(r'\]', '')
+    
+    # 2) Replace common LaTeX math commands with actual text symbols
+    s = s.replace(r'\times', ' x ').replace(r'\div', ' ÷ ').replace(r'\circ', '°')
+    s = s.replace(r'\pm', '±').replace(r'\leq', '≤').replace(r'\geq', '≥')
+    s = s.replace(r'\neq', '≠').replace(r'\approx', '≈')
+    s = s.replace(r'\pi', 'π').replace(r'\sqrt', '√')
+    
+    # 3) Handle fractions: \frac{3}{4} becomes 3/4
+    s = re.sub(r'\\frac\{([^}]+)\}\{([^}]+)\}', r'\1/\2', s)
+    
+    # 4) Nuke any remaining rogue backslashes
+    s = s.replace('\\', '')
+
+    # 5) Standard ReportLab formatting (Bold, Italics, HTML escapes)
     s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-    # Bold: **...**
     s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
-
-    # Italic: *...* (avoid converting list bullets like "* item" by requiring non-space after first *)
     s = re.sub(r"(?<!\*)\*(\S.+?)\*(?!\*)", r"<i>\1</i>", s)
-
+    
     return s
 
 
@@ -159,7 +158,7 @@ def generate_single_image(desc: str):
 
 
 def generate_pie_chart(data_str: str):
-    """Generates a pie chart PNG bytes using Matplotlib (no AI)."""
+    """Generates a pie chart PNG bytes using pure Python Matplotlib."""
     try:
         labels, sizes = [], []
         for item in str(data_str).split(","):
@@ -195,6 +194,7 @@ def generate_pie_chart(data_str: str):
 
 
 def process_visual(prompt_data):
+    """Helper to route threads to the correct generator"""
     trigger_type, data = prompt_data
     if trigger_type == "IMAGE_GEN":
         return generate_single_image(data)
@@ -204,7 +204,7 @@ def process_visual(prompt_data):
 
 
 # -----------------------------
-# 5) PDF EXPORT (supports Markdown tables + visuals)
+# 5) PDF EXPORT 
 # -----------------------------
 def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
     buffer = BytesIO()
@@ -218,31 +218,9 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
     )
 
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        "CustomTitle",
-        parent=styles["Heading1"],
-        fontSize=18,
-        textColor=colors.HexColor("#00d4ff"),
-        spaceAfter=12,
-        alignment=TA_CENTER,
-        fontName="Helvetica-Bold",
-    )
-    heading_style = ParagraphStyle(
-        "CustomHeading",
-        parent=styles["Heading2"],
-        fontSize=14,
-        spaceAfter=10,
-        spaceBefore=10,
-        fontName="Helvetica-Bold",
-    )
-    body_style = ParagraphStyle(
-        "CustomBody",
-        parent=styles["BodyText"],
-        fontSize=11,
-        spaceAfter=8,
-        alignment=TA_LEFT,
-        fontName="Helvetica",
-    )
+    title_style = ParagraphStyle("CustomTitle", parent=styles["Heading1"], fontSize=18, textColor=colors.HexColor("#00d4ff"), spaceAfter=12, alignment=TA_CENTER, fontName="Helvetica-Bold")
+    heading_style = ParagraphStyle("CustomHeading", parent=styles["Heading2"], fontSize=14, spaceAfter=10, spaceBefore=10, fontName="Helvetica-Bold")
+    body_style = ParagraphStyle("CustomBody", parent=styles["BodyText"], fontSize=11, spaceAfter=8, alignment=TA_LEFT, fontName="Helvetica")
 
     story = []
     if not content:
@@ -250,7 +228,7 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
 
     lines = str(content).split("\n")
 
-    # Strip AI preamble safely (look for first markdown header in first 5 lines)
+    # Strip AI preamble safely
     start_index = 0
     for i, line in enumerate(lines[:5]):
         if line.strip().startswith("#"):
@@ -273,7 +251,7 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
                 continue
             skip_sources = False
 
-        # Remove inline "(Source: ...)" remnants if present
+        # Remove inline sources
         clean_line = re.sub(r"\s*\(Source:.*?\)", "", line)
         cleaned_lines.append(clean_line)
 
@@ -297,18 +275,16 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
 
         t = Table(norm_rows, colWidths=col_widths)
         t.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#00d4ff")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("ALIGN", (0, 0), (-1, -1), "LEFT"),
-                    ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
-                    ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8f9fa")),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ]
-            )
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#00d4ff")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+                ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8f9fa")),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ])
         )
         story.append(t)
         story.append(Spacer(1, 0.18 * inch))
@@ -318,10 +294,9 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
         line = raw.rstrip("\n")
         s = line.strip()
 
-        # Markdown table detection: lines like | a | b |
+        # Markdown table detection
         if s.startswith("|") and s.endswith("|") and s.count("|") >= 2:
             cells = [c.strip() for c in s.split("|")[1:-1]]
-            # Skip separator rows: | --- | :---: |
             if all(re.fullmatch(r":?-+:?", c) for c in cells if c):
                 continue
             table_rows.append(cells)
@@ -333,7 +308,7 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
             story.append(Spacer(1, 0.14 * inch))
             continue
 
-        # Visual placeholder lines; images[] index must match triggers order
+        # Visuals
         if s.startswith("IMAGE_GEN:") or s.startswith("PIE_CHART:"):
             if images and img_idx < len(images) and images[img_idx]:
                 try:
@@ -351,14 +326,14 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
             img_idx += 1
             continue
 
-        # Page break before mark scheme title if it's a header
+        # Mark Scheme Page Break
         if "mark scheme" in s.lower() and s.startswith("#"):
             story.append(PageBreak())
             text = re.sub(r"^#+\s*", "", s)
             story.append(Paragraph(md_inline_to_rl(text), title_style))
             continue
 
-        # Render headings / normal paragraphs
+        # Headings / Text
         if s.startswith("# "):
             story.append(Paragraph(md_inline_to_rl(s[2:].strip()), title_style))
         elif s.startswith("## "):
@@ -392,15 +367,86 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 ### RULE 2: CONVERSATION MEMORY
 - Build upon previous responses if the user asks for more details.
 
-### RULE 4: STAGE 9 ENGLISH TB/WB I couldn't find the textbooks and workbooks for Stage 9 English, so here is a table of contents that you will refer to when answering a query for that chapter: Chapter 1 • Writing to explore and reflect 1.1 What is travel writing?  1.2 Selecting and noting key information in travel texts  1.3 Comparing tone and register in travel texts  1.4 Responding to travel writing  1.5 Understanding grammatical choices in travel writing  1.6 Varying sentences for effect  1.7 Boost your vocabulary  1.8 Creating a travel account  Chapter 2 • Writing to inform and explain 2.1 Matching informative texts to audience and purpose  2.2 Using formal and informal language in information texts  2.3 Comparing information texts  2.4 Using discussion to prepare for a written assignment  2.5 Planning information texts to suit different audiences  2.6 Shaping paragraphs to suit audience and purpose  2.7 Crafting sentences for a range of effects  2.8 Making explanations precise and concise  2.9 Writing encyclopedia entries  Chapter 3 • Writing to argue and persuade 3.1 Reviewing persuasive techniques  3.2 Commenting on use of language to persuade  3.3 Exploring layers of persuasive language  3.4 Responding to the use of persuasive language  3.5 Adapting grammar choices to create effects in argument writing  3.6 Organising a whole argument effectively  3.7 Organising an argument within each paragraph  3.8 Presenting and responding to a question  3.9 Producing an argumentative essay  Chapter 4 • Descriptive writing 4.1 Analysing how atmospheres are created  4.2 Developing analysis of a description  4.3 Analysing atmospheric descriptions  4.4 Using images to inspire description  4.5 Using language to develop an atmosphere  4.6 Sustaining a cohesive atmosphere  4.7 Creating atmosphere through punctuation  4.8 Using structural devices to build up atmosphere  4.9 Producing a powerful description  Chapter 5 • Narrative writing 5.1 Understanding story openings  5.2 Exploring setting and atmosphere  5.3 Introducing characters in stories  5.4 Responding to powerful narrative  5.5 Pitching a story  5.6 Creating narrative suspense and climax  5.7 Creating character  5.8 Using tenses in narrative  5.9 Using pronouns and sentence order for effect  5.10 Creating a thriller  Chapter 6 • Writing to analyse and compare 6.1 Analysing implicit meaning in non-fiction texts  6.2 Analysing how a play's key elements create different effects  6.3 Using discussion skills to analyse carefully  6.4 Comparing effectively through punctuation and grammar  6.5 Analysing two texts  Chapter 7 • Testing your skills 7.1 Reading and writing questions on non-fiction texts  7.2 Reading and writing questions on fiction texts  7.3 Assessing your progress: non-fiction reading and writing  7.4 Assessing your progress: fiction reading and writing
-
 ### RULE 3: QUESTION PAPERS (CRITICAL FORMATTING)
+- SUBJECT RELEVANCE: NEVER put Science diagrams or questions in a Math paper, and vice versa! Keep visuals strictly relevant to the current subject.
+- NO LATEX MATH: DO NOT use LaTeX for math formatting. NEVER use backslashes (\) or commands like \frac, \times, \div.
+- PLAIN TEXT MATH ONLY: Use standard keyboard characters. Use / for fractions (e.g., 3/4), x or * for multiplication, ÷ or / for division, and ^ for powers.
 - Tables: ALWAYS use standard Markdown tables. Do NOT use IMAGE_GEN for tables.
 - Visuals: Use IMAGE_GEN for diagrams, PIE_CHART for pie charts.
 - NUMBERING: Clean numbering 1., 2., 3. and sub-questions (a), (b), (c).
 - MARKS: Put marks at end of the SAME LINE like "... [3]".
 - CITATION RULE: List the source(s) only once at the very bottom.
 - PDF TRIGGER: If, and ONLY IF, you generated a full formal question paper, append [PDF_READY] at the very end.
+
+### RULE 4: STAGE 9 ENGLISH TB/WB
+I couldn't find the textbooks and workbooks for Stage 9 English, so here is a table of contents that you will refer to when answering a query for that chapter:
+Chapter 1 • Writing to explore and reflect
+1.1 What is travel writing?
+1.2 Selecting and noting key information in travel texts
+1.3 Comparing tone and register in travel texts
+1.4 Responding to travel writing
+1.5 Understanding grammatical choices in travel writing
+1.6 Varying sentences for effect
+1.7 Boost your vocabulary
+1.8 Creating a travel account
+
+Chapter 2 • Writing to inform and explain
+2.1 Matching informative texts to audience and purpose
+2.2 Using formal and informal language in information texts
+2.3 Comparing information texts
+2.4 Using discussion to prepare for a written assignment
+2.5 Planning information texts to suit different audiences
+2.6 Shaping paragraphs to suit audience and purpose
+2.7 Crafting sentences for a range of effects
+2.8 Making explanations precise and concise
+2.9 Writing encyclopedia entries
+
+Chapter 3 • Writing to argue and persuade
+3.1 Reviewing persuasive techniques
+3.2 Commenting on use of language to persuade
+3.3 Exploring layers of persuasive language
+3.4 Responding to the use of persuasive language
+3.5 Adapting grammar choices to create effects in argument writing
+3.6 Organising a whole argument effectively
+3.7 Organising an argument within each paragraph
+3.8 Presenting and responding to a question
+3.9 Producing an argumentative essay
+
+Chapter 4 • Descriptive writing
+4.1 Analysing how atmospheres are created
+4.2 Developing analysis of a description
+4.3 Analysing atmospheric descriptions
+4.4 Using images to inspire description
+4.5 Using language to develop an atmosphere
+4.6 Sustaining a cohesive atmosphere
+4.7 Creating atmosphere through punctuation
+4.8 Using structural devices to build up atmosphere
+4.9 Producing a powerful description
+
+Chapter 5 • Narrative writing
+5.1 Understanding story openings
+5.2 Exploring setting and atmosphere
+5.3 Introducing characters in stories
+5.4 Responding to powerful narrative
+5.5 Pitching a story
+5.6 Creating narrative suspense and climax
+5.7 Creating character
+5.8 Using tenses in narrative
+5.9 Using pronouns and sentence order for effect
+5.10 Creating a thriller
+
+Chapter 6 • Writing to analyse and compare
+6.1 Analysing implicit meaning in non-fiction texts
+6.2 Analysing how a play's key elements create different effects
+6.3 Using discussion skills to analyse carefully
+6.4 Comparing effectively through punctuation and grammar
+6.5 Analysing two texts
+
+Chapter 7 • Testing your skills
+7.1 Reading and writing questions on non-fiction texts
+7.2 Reading and writing questions on fiction texts
+7.3 Assessing your progress: non-fiction reading and writing
+7.4 Assessing your progress: fiction reading and writing
 
 ### RULE 5: VISUAL SYNTAX (STRICT)
 - For diagrams:
@@ -421,6 +467,7 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 def upload_textbooks():
     target_filenames = [
         "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf",
+        "CIE_9_SB_Eng.pdf", "CIE_9_WB_Eng.pdf", # Added Stage 9 English PDFs in case you have them!
         "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf",
         "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
         "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf",
@@ -767,4 +814,3 @@ if chat_input_data:
                     os.remove(temp_pdf_path)
             except Exception:
                 pass
-
