@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import time
 import re
+import base64
 import concurrent.futures
 from pathlib import Path
 from google import genai
@@ -13,16 +14,18 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, 
 from reportlab.lib.utils import ImageReader
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from io import BytesIO
+from supabase import create_client
 
 # --- 1. SETUP & CONFIGURATION ---
 st.set_page_config(page_title="helix.ai", page_icon="📚", layout="centered")
 
+# Initialize Gemini
 api_key = os.environ.get("GOOGLE_API_KEY")
 if not api_key:
     if "GOOGLE_API_KEY" in st.secrets:
         api_key = st.secrets["GOOGLE_API_KEY"]
     else:
-        st.error("🚨 Critical Error: GOOGLE_API_KEY not found.")
+        st.error("🚨 Critical Error: GOOGLE_API_KEY not found in Streamlit Secrets.")
         st.stop()
 
 try:
@@ -31,7 +34,60 @@ except Exception as e:
     st.error(f"🚨 Failed to initialize Gemini Client: {e}")
     st.stop()
 
-# --- 2. THEME CSS & TITLE ---
+# --- 2. SUPABASE AUTH & DATABASE ---
+@st.cache_resource
+def init_supabase():
+    try:
+        return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    except Exception as e:
+        st.error(f"🚨 Supabase connection failed: {e}")
+        return None
+
+supabase = init_supabase()
+
+# Catch OAuth callback from Google
+if "code" in st.query_params and supabase:
+    auth_code = st.query_params["code"]
+    try:
+        supabase.auth.exchange_code_for_session({"auth_code": auth_code})
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(f"Login failed: {e}")
+
+def get_user():
+    if not supabase: return None
+    try:
+        return supabase.auth.get_user().user
+    except:
+        return None
+
+current_user = get_user()
+
+# Database helper functions
+def bytes_to_b64(img_bytes):
+    return base64.b64encode(img_bytes).decode('utf-8')
+
+def b64_to_bytes(b64_str):
+    return base64.b64decode(b64_str)
+
+def save_to_db(role, content, images_bytes_list=None):
+    if current_user and supabase:
+        b64_images = []
+        if images_bytes_list:
+            b64_images = [bytes_to_b64(img) for img in images_bytes_list if img]
+            
+        try:
+            supabase.table("chats").insert({
+                "user_id": current_user.id,
+                "role": role,
+                "content": content,
+                "images": b64_images
+            }).execute()
+        except Exception as e:
+            print(f"Failed to save to db: {e}")
+
+# --- 3. THEME CSS & TITLE ---
 st.markdown("""
 <style>
 .stApp { background: radial-gradient(800px circle at 50% 0%, rgba(0, 212, 255, 0.08), rgba(0, 212, 255, 0.00) 60%), var(--background-color); color: var(--text-color); }
@@ -49,7 +105,181 @@ st.markdown("""
 <div class="subtitle">Your CIE Tutor for Grade 6-8!</div>
 """, unsafe_allow_html=True)
 
-# --- 3. HELPER: FORMAT FILE NAMES ---
+# --- SIDEBAR UI ---
+with st.sidebar:
+    st.markdown("### 👤 Student Account")
+    if not current_user:
+        st.info("Log in to save your tests and diagrams across devices!")
+        if supabase:
+            try:
+                # IMPORTANT: Ensure APP_URL in secrets exactly matches your deployed URL
+                app_url = st.secrets.get("APP_URL", "http://localhost:8501")
+                res = supabase.auth.sign_in_with_oauth({
+                    "provider": "google",
+                    "options": {"redirect_to": app_url}
+                })
+                st.link_button("🌐 Sign in with Google", res.url)
+            except Exception as e:
+                st.error("Authentication setup missing.")
+    else:
+        st.success(f"Logged in as:\n**{current_user.email}**")
+        if st.button("Log Out"):
+            supabase.auth.sign_out()
+            st.rerun()
+
+# --- 4. FULL SYSTEM INSTRUCTIONS ---
+# This dictates EXACTLY how the AI behaves, generates images, formats PDFs, and searches books.
+SYSTEM_INSTRUCTION = """
+You are Helix, an expert, friendly, and highly capable Cambridge (CIE) Tutor for Stage 7-9 (Grades 6-8).
+Your subjects are Science, Mathematics, and English.
+
+### RULE 1: THE VISION & RAG SEARCH (CRITICAL)
+- If the user provides an IMAGE, PDF, or TXT file, analyze it carefully.
+- STEP 1: Search the attached PDF textbooks using OCR FIRST. Cite the book at the end like this: (Source: Cambridge Science Textbook 7).
+- STEP 2: If the textbooks do not contain the answer, explicitly state: "I couldn't find this in your textbook, but here is what I found:"
+
+### RULE 2: CONVERSATION MEMORY
+- Build upon previous responses if the user asks for more details. Keep context alive.
+
+### RULE 3: QUESTION PAPERS & PDF EXPORT (CRITICAL FORMATTING)
+- DO NOT use Markdown tables (e.g. `| Property | Metal |`). Text tables will not render properly in our PDF exporter.
+- If a question requires a table, you MUST generate it as an image using the IMAGE_GEN command. Example: `IMAGE_GEN: [A clean, blank comparison table worksheet for metals and non-metals]`
+- MUST include visual, diagram-based questions in assessments. Generate the diagrams using the IMAGE_GEN command. Example: `IMAGE_GEN: [Detailed diagram of a plant cell, with clear label lines A, B, C for a science exam]`
+- NUMBERING: Keep numbering extremely clean and sequential (1., 2., 3.) and sub-questions as (a), (b), (c).
+- MARKS: Put the marks on the SAME LINE as the question text at the very end (e.g., "Describe the process of photosynthesis. [3]"), do NOT put marks on a new line.
+- CITATION RULE: List the source(s) ONLY ONCE at the very bottom of the entire paper.
+- **PDF TRIGGER (STRICT):** If, and ONLY IF, you have generated a full, formal Question Paper or Assessment, you MUST write the exact phrase `[PDF_READY]` at the very end of your response. Do NOT use this tag for normal conversations.
+
+### RULE 4: STAGE 9 ENGLISH TB/WB SPECIFICS
+I couldn't find the books for the English Stage 9 Workbook and Textbook, so here is the table of contents that you will help others with:
+Chapter 1 • Writing to explore and reflect
+1.1 What is travel writing?
+
+1.2 Selecting and noting key information in travel texts
+
+1.3 Comparing tone and register in travel texts
+
+1.4 Responding to travel writing
+
+1.5 Understanding grammatical choices in travel writing
+
+1.6 Varying sentences for effect
+
+1.7 Boost your vocabulary
+
+1.8 Creating a travel account
+
+Chapter 2 • Writing to inform and explain
+2.1 Matching informative texts to audience and purpose
+
+2.2 Using formal and informal language in information texts
+
+2.3 Comparing information texts
+
+2.4 Using discussion to prepare for a written assignment
+
+2.5 Planning information texts to suit different audiences
+
+2.6 Shaping paragraphs to suit audience and purpose
+
+2.7 Crafting sentences for a range of effects
+
+2.8 Making explanations precise and concise
+
+2.9 Writing encyclopedia entries
+
+Chapter 3 • Writing to argue and persuade
+3.1 Reviewing persuasive techniques
+
+3.2 Commenting on use of language to persuade
+
+3.3 Exploring layers of persuasive language
+
+3.4 Responding to the use of persuasive language
+
+3.5 Adapting grammar choices to create effects in argument writing
+
+3.6 Organising a whole argument effectively
+
+3.7 Organising an argument within each paragraph
+
+3.8 Presenting and responding to a question
+
+3.9 Producing an argumentative essay
+
+Chapter 4 • Descriptive writing
+4.1 Analysing how atmospheres are created
+
+4.2 Developing analysis of a description
+
+4.3 Analysing atmospheric descriptions
+
+4.4 Using images to inspire description
+
+4.5 Using language to develop an atmosphere
+
+4.6 Sustaining a cohesive atmosphere
+
+4.7 Creating atmosphere through punctuation
+
+4.8 Using structural devices to build up atmosphere
+
+4.9 Producing a powerful description
+
+Chapter 5 • Narrative writing
+5.1 Understanding story openings
+
+5.2 Exploring setting and atmosphere
+
+5.3 Introducing characters in stories
+
+5.4 Responding to powerful narrative
+
+5.5 Pitching a story
+
+5.6 Creating narrative suspense and climax
+
+5.7 Creating character
+
+5.8 Using tenses in narrative
+
+5.9 Using pronouns and sentence order for effect
+
+5.10 Creating a thriller
+
+Chapter 6 • Writing to analyse and compare
+6.1 Analysing implicit meaning in non-fiction texts
+
+6.2 Analysing how a play's key elements create different effects
+
+6.3 Using discussion skills to analyse carefully
+
+6.4 Comparing effectively through punctuation and grammar
+
+6.5 Analysing two texts
+
+Chapter 7 • Testing your skills
+7.1 Reading and writing questions on non-fiction texts
+
+7.2 Reading and writing questions on fiction texts
+
+7.3 Assessing your progress: non-fiction reading and writing
+
+7.4 Assessing your progress: fiction reading and writing
+### RULE 5: IMAGE GENERATION SYNTAX (STRICT)
+- To trigger image generation (for diagrams, charts, worksheets, tables), output this EXACT command on its OWN NEW LINE:
+  IMAGE_GEN: [Detailed description of the image, educational, white background]
+- You can use MULTIPLE IMAGE_GEN commands in a single response!
+
+### RULE 6: MARK SCHEME
+- Put "## Mark Scheme" at the very bottom of the test. 
+- Ensure page breaks happen naturally by using this exact Markdown header. Do not use citation tags inside the mark scheme.
+
+### RULE 7: ARMAAN STYLE
+- If the user asks for "Armaan Style", explain the concept in highly technical, expert terms using complex vocabulary.
+"""
+
+# --- 5. HELPER: FORMAT FILE NAMES ---
 def get_friendly_name(filename):
     if not filename: return "Cambridge Textbook"
     name = filename.replace(".pdf", "").replace(".PDF", "")
@@ -62,9 +292,8 @@ def get_friendly_name(filename):
     part_str = " (Part 1)" if "1" in parts[2:] else " (Part 2)" if "2" in parts[2:] else ""
     return f"Cambridge {subject} {book_type} {grade}{part_str}"
 
-# --- 4. PARALLEL IMAGE GENERATOR ---
+# --- 6. PARALLEL IMAGE GENERATOR ---
 def generate_single_image(desc):
-    """Generates a single image via Gemini API. Used in thread pool."""
     try:
         img_resp = client.models.generate_content(
             model="gemini-3-pro-image-preview",
@@ -78,9 +307,8 @@ def generate_single_image(desc):
         print(f"Image gen error: {e}")
     return None
 
-# --- 5. PDF EXPORT FUNCTION ---
+# --- 7. PDF EXPORT FUNCTION ---
 def create_pdf(content, images=None, filename="Question_Paper.pdf"):
-    """Convert markdown-style text and generated images to a clean PDF"""
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=0.75*inch, leftMargin=0.75*inch, topMargin=0.75*inch, bottomMargin=0.75*inch)
     
@@ -90,50 +318,39 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
     body_style = ParagraphStyle('CustomBody', parent=styles['BodyText'], fontSize=11, spaceAfter=8, alignment=TA_LEFT, fontName='Helvetica')
     
     story = []
-    
     lines = content.split('\n')
     start_index = 0
     
-    # Strip AI preamble SAFELY (only search the first 5 lines for a header)
     for i, line in enumerate(lines[:5]):
         if line.strip().startswith('#'):
             start_index = i
             break
             
     lines = lines[start_index:]
-    
     cleaned_lines = []
     skip_section = False
     
     for line in lines:
         stripped = line.strip()
-        
-        # Stop completely if we hit the hidden trigger tag
-        if "[PDF_READY]" in stripped:
-            continue
+        if "[PDF_READY]" in stripped: continue
             
         if stripped.startswith("Source(s):") or stripped.startswith("**Source(s):**"):
             skip_section = True
             continue
         if skip_section:
-            if not stripped or stripped.startswith("*") or stripped.startswith("-"):
-                continue
-            else:
-                skip_section = False
+            if not stripped or stripped.startswith("*") or stripped.startswith("-"): continue
+            else: skip_section = False
         
         clean_line = re.sub(r'\s*\(Source:.*?\)', '', line)
         clean_line = re.sub(r'^\s*,\s*page\s+[\d,\s]+\)', '', clean_line)
         clean_line = re.sub(r'^\s*\*\s+', '', clean_line)
         
-        if not clean_line.strip() and line.strip(): 
-            continue
-            
+        if not clean_line.strip() and line.strip(): continue
         cleaned_lines.append(clean_line)
     
     img_idx = 0
     for line in cleaned_lines:
         line_stripped = line.strip()
-        
         if not line_stripped:
             story.append(Spacer(1, 0.15*inch))
             continue
@@ -141,7 +358,7 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
         if "IMAGE_GEN:" in line_stripped:
             if images and img_idx < len(images):
                 img_data = images[img_idx]
-                if img_data:  # Make sure the concurrent thread didn't fail
+                if img_data: 
                     try:
                         img_stream = BytesIO(img_data)
                         rl_reader = ImageReader(img_stream)
@@ -152,8 +369,7 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
                         story.append(Spacer(1, 0.15*inch))
                         story.append(RLImage(img_stream, width=target_width, height=target_height))
                         story.append(Spacer(1, 0.15*inch))
-                    except Exception:
-                        pass
+                    except Exception: pass
                 img_idx += 1
             continue
             
@@ -183,48 +399,11 @@ def create_pdf(content, images=None, filename="Question_Paper.pdf"):
     story.append(Spacer(1, 0.3*inch))
     footer = Paragraph("<i>Generated by helix.ai - Your CIE Tutor</i>", body_style)
     story.append(footer)
-    
     doc.build(story)
     buffer.seek(0)
     return buffer
 
-# --- 6. SYSTEM INSTRUCTIONS ---
-SYSTEM_INSTRUCTION = """
-You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
-
-### RULE 1: THE VISION & RAG SEARCH (CRITICAL)
-- If the user provides an IMAGE, PDF, or TXT file, analyze it carefully.
-- STEP 1: Search the attached PDF textbooks using OCR FIRST.
-- STEP 2: If the textbooks do not contain the answer, explicitly state: "I couldn't find this in your textbook, but here is what I found:"
-
-### RULE 2: CONVERSATION MEMORY
-- Build upon previous responses if the user asks for more details.
-
-### RULE 3: QUESTION PAPERS (CRITICAL FORMATTING)
-- DO NOT use Markdown tables (e.g. `| Property | Metal |`). Text tables will not render properly.
-- If a question requires a table, you MUST generate it as an image using the IMAGE_GEN command. Example: `IMAGE_GEN: [A clean, blank comparison table worksheet for metals and non-metals]`
-- MUST include visual, diagram-based questions. Generate the diagrams using the IMAGE_GEN command. Example: `IMAGE_GEN: [Detailed diagram of a plant cell, with clear label lines A, B, C for a science exam]`
-- NUMBERING: Keep numbering extremely clean and sequential (1., 2., 3.) and sub-questions as (a), (b), (c).
-- MARKS: Put the marks on the SAME LINE as the question text at the very end (e.g., "Describe the process of photosynthesis. [3]"), do NOT put marks on a new line.
-- CITATION RULE: List the source(s) ONLY ONCE at the very bottom of the entire paper.
-- **PDF TRIGGER (STRICT):** If, and ONLY IF, you have generated a full, formal Question Paper or Assessment, you MUST write the exact phrase `[PDF_READY]` at the very end of your response. Do NOT use this tag for normal conversations, answering single questions, or explaining concepts.
-
-### RULE 4: STAGE 9 ENGLISH TB/WB
-- Table of contents: Chapter 1-7 covers Writing to explore, inform, argue, descriptive, narrative, analyze.
-
-### RULE 5: IMAGE GENERATION SYNTAX (STRICT)
-- To trigger image generation, output this EXACT command on its OWN NEW LINE:
-  IMAGE_GEN: [Detailed description of the image, educational, white background]
-- You can use MULTIPLE IMAGE_GEN commands throughout the paper for different tables and diagrams!
-
-### RULE 6: MARK SCHEME
-- Put "## Mark Scheme" at the very bottom of the test. Do not use citation tags inside the mark scheme.
-
-### RULE 7: ARMAAN STYLE
-- If asked for "Armaan Style", explain in expert terms using complex vocabulary.
-"""
-
-# --- 7. GOOGLE FILE API ---
+# --- 8. GOOGLE FILE API ---
 @st.cache_resource(show_spinner=False)
 def upload_textbooks():
     target_filenames = [
@@ -272,13 +451,12 @@ def upload_textbooks():
                     if "sci" in t_lower: active_files["sci"].append(uploaded_file)
                     elif "math" in t_lower: active_files["math"].append(uploaded_file)
                     elif "eng" in t_lower: active_files["eng"].append(uploaded_file)
-            except Exception:
-                continue
+            except Exception: continue
 
     msg_placeholder.empty()
     return active_files
 
-# --- 8. STRICT ROUTING LOGIC ---
+# --- 9. STRICT ROUTING LOGIC ---
 def select_relevant_books(query, file_dict):
     query = query.lower()
     selected = []
@@ -307,43 +485,60 @@ def select_relevant_books(query, file_dict):
     add_books("eng", is_eng)
     return selected[:3] 
 
-# --- 9. INITIALIZE SESSION ---
+# --- 10. INITIALIZE SESSION WITH DB SYNC ---
 if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {
-            "role": "assistant", 
-            "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! You can also **attach photos, PDFs, or Text files directly in the chat box below!** 📸📄\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?",
-            "is_greeting": True
-        }
-    ]
+    st.session_state.messages = []
+    
+    # 1. Show greeting
+    st.session_state.messages.append({
+        "role": "assistant", 
+        "content": "👋 **Hey there! I'm Helix!**\n\nI'm your friendly CIE tutor here to help you ace your CIE exams! 📖\n\nI can answer your doubts, draw diagrams, and create quizes! You can also **attach photos, PDFs, or Text files directly in the chat box below!** 📸📄\n\n**Quick Reminder:** In the Cambridge system, your **Stage** is usually your **Grade + 1**.\n*(Example: If you are in Grade 7, you are studying Stage 8 content!)*\n\nWhat are we learning today?",
+        "is_greeting": True
+    })
+    
+    # 2. Fetch history if logged in
+    if current_user and supabase:
+        try:
+            response = supabase.table("chats").select("*").eq("user_id", current_user.id).order("created_at").execute()
+            for row in response.data:
+                img_bytes_list = [b64_to_bytes(b64) for b64 in row.get("images", [])] if row.get("images") else []
+                st.session_state.messages.append({
+                    "role": row["role"],
+                    "content": row["content"],
+                    "images": img_bytes_list,
+                    "is_downloadable": "[PDF_READY]" in row["content"]
+                })
+        except Exception as e:
+            print(f"Error loading history: {e}")
 
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
 
-# --- 10. DISPLAY CHAT ---
+# --- 11. DISPLAY CHAT ---
+# Render all messages stored in state
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
-        # Hide the hidden trigger tag from the user UI
+        # Remove [PDF_READY] tag before displaying text to the user
         display_content = message["content"].replace("[PDF_READY]", "").strip()
         st.markdown(display_content)
         
+        # Display images
         if message.get("images"):
             for img_bytes in message["images"]:
-                if img_bytes:
-                    st.image(img_bytes, width=400)
+                if img_bytes: st.image(img_bytes, width=400)
         
+        # Display attachments
         if message.get("user_attachment_bytes"):
             mime = message.get("user_attachment_mime", "")
             name = message.get("user_attachment_name", "File")
-            if "image" in mime:
-                st.image(message["user_attachment_bytes"], width=300)
-            elif "pdf" in mime:
-                st.caption(f"📄 *Attached PDF Document: {name}*")
-            elif "text" in mime or name.endswith(".txt"):
-                st.caption(f"📝 *Attached Text Document: {name}*")
+            if "image" in mime: st.image(message["user_attachment_bytes"], width=300)
+            elif "pdf" in mime: st.caption(f"📄 *Attached PDF Document: {name}*")
+            elif "text" in mime or name.endswith(".txt"): st.caption(f"📝 *Attached Text Document: {name}*")
         
+        # Display download button if it was a test
         if message["role"] == "assistant" and message.get("is_downloadable"):
             try:
+                # We need to pass the images array to create_pdf so it injects them
                 pdf_buffer = create_pdf(message["content"], images=message.get("images", []))
                 st.download_button(
                     label="📥 Download Question Paper as PDF",
@@ -352,11 +547,10 @@ for idx, message in enumerate(st.session_state.messages):
                     mime="application/pdf",
                     key=f"download_{idx}"
                 )
-            except Exception:
-                pass
+            except Exception: pass
 
-# --- 11. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
-if chat_input_data := st.chat_input("Ask Helix... (Click the plus icon to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
+# --- 12. MAIN LOOP WITH INTEGRATED CHAT UPLOADER ---
+if chat_input_data := st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"]):
     
     prompt = chat_input_data.text
     uploaded_files = chat_input_data.files
@@ -372,6 +566,9 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the plus icon to upload
         user_msg_dict["user_attachment_name"] = file_name
         
     st.session_state.messages.append(user_msg_dict)
+    
+    # Save user message to DB
+    save_to_db("user", prompt)
     
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -400,13 +597,13 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the plus icon to upload
             
             current_prompt_parts = []
             
+            # Handle Uploaded files for this specific turn
             if file_bytes:
                 if "image" in file_mime:
                     current_prompt_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=file_mime))
                 elif "pdf" in file_mime:
                     temp_pdf_path = f"temp_user_upload_{int(time.time())}.pdf"
-                    with open(temp_pdf_path, "wb") as f:
-                        f.write(file_bytes)
+                    with open(temp_pdf_path, "wb") as f: f.write(file_bytes)
                     user_uploaded_pdf = client.files.upload(file=temp_pdf_path)
                     while user_uploaded_pdf.state.name == "PROCESSING":
                         time.sleep(1)
@@ -416,6 +613,7 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the plus icon to upload
                     raw_text = file_bytes.decode("utf-8", errors="ignore")
                     current_prompt_parts.append(types.Part.from_text(text=f"--- Attached Text File ({file_name}) ---\n{raw_text}\n--- End of File ---\n"))
             
+            # Handle Books
             for book in relevant_books:
                 friendly_name = get_friendly_name(book.display_name)
                 current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {friendly_name}]"))
@@ -429,7 +627,9 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the plus icon to upload
             history_contents = []
             text_msgs = [m for m in st.session_state.messages[:-1] if not m.get("is_greeting")]
             for msg in text_msgs[-7:]:
-                history_contents.append(types.Content(role="user" if msg["role"] == "user" else "model", parts=[types.Part.from_text(text=msg["content"])]))
+                # remove hidden tags before sending history back to Gemini
+                clean_hist_content = msg["content"].replace("[PDF_READY]", "").strip()
+                history_contents.append(types.Content(role="user" if msg["role"] == "user" else "model", parts=[types.Part.from_text(text=clean_hist_content)]))
             
             full_contents = history_contents + [current_content]
 
@@ -464,7 +664,6 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the plus icon to upload
                     
                 img_thinking.empty()
 
-            # STRICT PDF TRIGGER CHECK
             is_downloadable = "[PDF_READY]" in bot_text
             
             bot_msg = {
@@ -475,14 +674,15 @@ if chat_input_data := st.chat_input("Ask Helix... (Click the plus icon to upload
             }
             st.session_state.messages.append(bot_msg)
             
-            # Show on screen instantly (hiding the strict tag)
+            # Save Assistant message to DB
+            save_to_db("assistant", bot_text, generated_images)
+            
             display_text = bot_text.replace("[PDF_READY]", "").strip()
             st.markdown(display_text)
-            for img in generated_images:
-                if img:
-                    st.image(img, caption="Generated by Helix")
             
-            # Generate the supercharged PDF
+            for img in generated_images:
+                if img: st.image(img, caption="Generated by Helix")
+            
             if is_downloadable:
                 try:
                     pdf_buffer = create_pdf(bot_text, images=generated_images)
