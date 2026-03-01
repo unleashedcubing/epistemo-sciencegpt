@@ -448,6 +448,9 @@ Chapter 7 • Testing your skills
 7.3 Assessing your progress: non-fiction reading and writing
 7.4 Assessing your progress: fiction reading and writing
 
+- MATH ACCURACY: When generating math questions and mark schemes, you must solve the equations step-by-step internally before writing the final mark scheme. Ensure the variables in the mark scheme EXACTLY match the variables used in the questions.
+
+
 ### RULE 5: VISUAL SYNTAX (STRICT)
 - For diagrams:
   IMAGE_GEN: [Detailed description of the image, educational, white background]
