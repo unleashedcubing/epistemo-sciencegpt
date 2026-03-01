@@ -354,7 +354,7 @@ def upload_textbooks():
     with msg_placeholder.chat_message("assistant"):
         st.markdown(f"""
         <div class="thinking-container">
-            <span class="thinking-text">🔄 Connecting to Google Cloud & Scanning Library...</span>
+            <span class="thinking-text"> 📚 Scanning Books...</span>
             <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
         </div>
         """, unsafe_allow_html=True)
