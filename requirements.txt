@@ -4,3 +4,4 @@ reportlab
 matplotlib
 Pillow
 authlib
+google-cloud-firestore
