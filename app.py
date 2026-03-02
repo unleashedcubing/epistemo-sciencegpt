@@ -47,6 +47,32 @@ st.markdown("""
 .thinking-dot:nth-child(2){ animation-delay: 0.2s; }
 .thinking-dot:nth-child(3){ animation-delay: 0.4s; }
 @keyframes thinking-pulse { 0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); } 30% { opacity: 1; transform: scale(1.2); } }
+
+/* =========================================
+   SIDEBAR POPOVER HACKS (PERPLEXITY STYLE)
+   ========================================= */
+/* 1. HIDE THE CHEVRON ARROW: Target the specific SVG Streamlit uses for popover arrows */
+div[data-testid="stPopover"] button svg:last-of-type { 
+    display: none !important; 
+}
+
+/* 2. MAKE THE 3-DOTS BUTTON SMALL AND SQUARE */
+div[data-testid="stPopover"] button { 
+    padding: 0px !important; 
+    min-height: 40px !important; 
+    height: 40px !important;
+    width: 40px !important; 
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 3. SHRINK THE MASSIVE DROPDOWN MENU */
+div[data-testid="stPopoverBody"] {
+    min-width: 220px !important;
+    width: 220px !important;
+    padding: 12px !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -199,8 +225,11 @@ if "current_thread_id" not in st.session_state:
 if "messages" not in st.session_state:
     st.session_state.messages = get_default_greeting()
 
+if "delete_requested_for" not in st.session_state:
+    st.session_state.delete_requested_for = None
+
 # -----------------------------
-# 3.5) DIALOG UI MENUS
+# 3.5) POPUP CONFIRMATION UI
 # -----------------------------
 @st.dialog("⚠️ Maximum Chats Reached")
 def confirm_new_chat_dialog(oldest_thread_id):
@@ -241,40 +270,11 @@ def confirm_delete_chat_dialog(thread_id_to_delete):
                     coll_ref.document(thread_id_to_delete).delete()
                 except: pass
             
+            # If we deleted the chat we are currently looking at, start fresh
             if st.session_state.current_thread_id == thread_id_to_delete:
                 st.session_state.current_thread_id = str(uuid.uuid4())
                 st.session_state.messages = get_default_greeting()
             st.rerun()
-
-@st.dialog("⚙️ Chat Settings")
-def chat_settings_dialog(t):
-    # Metadata Display
-    st.markdown("**Chat Metadata**")
-    subs = ", ".join(t.get("metadata", {}).get("subjects", [])) or "None"
-    grds = ", ".join(t.get("metadata", {}).get("grades", [])) or "None"
-    st.caption(f"📚 **Subjects:** {subs}")
-    st.caption(f"🎓 **Grades:** {grds}")
-    
-    st.divider()
-    
-    # Rename Input
-    new_title = st.text_input("Rename Chat", value=t["title"], key=f"ren_in_{t['id']}")
-    if st.button("💾 Save Name", key=f"ren_btn_{t['id']}", use_container_width=True):
-        coll_ref = get_threads_collection()
-        if coll_ref:
-            coll_ref.document(t["id"]).set({
-                "title": new_title,
-                "user_edited_title": True
-            }, merge=True)
-        st.rerun()
-        
-    st.divider()
-    
-    # Trigger Delete Dialog
-    if st.button("🗑️ Delete Chat", key=f"del_btn_settings_{t['id']}", type="primary", use_container_width=True):
-        st.rerun() # Closes this dialog so the delete dialog can open
-        st.session_state[f"trigger_delete_{t['id']}"] = True
-
 
 # -----------------------------
 # 4) SIDEBAR UI (MULTIPLE CHATS)
@@ -310,7 +310,6 @@ with st.sidebar:
             st.caption("*Your saved chats will appear here.*")
             
         for t in sidebar_threads:
-            # We use an empty label and the native icon parameter to get a pure 3-dots button!
             col1, col2 = st.columns([0.85, 0.15], vertical_alignment="center")
             
             with col1:
@@ -321,14 +320,38 @@ with st.sidebar:
                     st.rerun()
                     
             with col2:
-                # This opens the settings dialog instead of a popover
-                if st.button("", icon=":material/more_vert:", key=f"settings_{t['id']}", use_container_width=True):
-                    chat_settings_dialog(t)
-            
-            # Check if the settings dialog requested a delete
-            if st.session_state.get(f"trigger_delete_{t['id']}", False):
-                st.session_state[f"trigger_delete_{t['id']}"] = False
-                confirm_delete_chat_dialog(t["id"])
+                # Minimalist 3-dots icon popover with reduced size
+                with st.popover("", icon=":material/more_vert:", use_container_width=False):
+                    st.markdown("**Chat Metadata**")
+                    subs = ", ".join(t.get("metadata", {}).get("subjects", [])) or "None"
+                    grds = ", ".join(t.get("metadata", {}).get("grades", [])) or "None"
+                    st.caption(f"📚 **Subjects:** {subs}")
+                    st.caption(f"🎓 **Grades:** {grds}")
+                    
+                    st.divider()
+                    
+                    new_title = st.text_input("Rename Chat", value=t["title"], key=f"ren_in_{t['id']}")
+                    if st.button("💾 Save", key=f"ren_btn_{t['id']}", use_container_width=True):
+                        coll_ref = get_threads_collection()
+                        if coll_ref:
+                            coll_ref.document(t["id"]).set({
+                                "title": new_title,
+                                "user_edited_title": True
+                            }, merge=True)
+                        st.rerun()
+                        
+                    st.divider()
+                    
+                    # Store the ID in session state to trigger the dialog outside the sidebar loop
+                    if st.button("🗑️ Delete Chat", key=f"del_btn_{t['id']}", type="primary", use_container_width=True):
+                        st.session_state.delete_requested_for = t["id"]
+                        st.rerun()
+
+# 🚨 Trigger the dialog outside the loop so Streamlit properly renders it
+if st.session_state.delete_requested_for:
+    confirm_delete_chat_dialog(st.session_state.delete_requested_for)
+    st.session_state.delete_requested_for = None
+
 
 # Main app title
 st.markdown("<div class='big-title'>📚 helix.ai</div>", unsafe_allow_html=True)
