@@ -47,32 +47,6 @@ st.markdown("""
 .thinking-dot:nth-child(2){ animation-delay: 0.2s; }
 .thinking-dot:nth-child(3){ animation-delay: 0.4s; }
 @keyframes thinking-pulse { 0%, 60%, 100% { opacity: 0.3; transform: scale(0.8); } 30% { opacity: 1; transform: scale(1.2); } }
-
-/* =========================================
-   SIDEBAR POPOVER HACKS (PERPLEXITY STYLE)
-   ========================================= */
-/* 1. HIDE THE CHEVRON ARROW: Target the specific SVG Streamlit uses for popover arrows */
-div[data-testid="stPopover"] button svg:last-of-type { 
-    display: none !important; 
-}
-
-/* 2. MAKE THE 3-DOTS BUTTON SMALL AND SQUARE */
-div[data-testid="stPopover"] button { 
-    padding: 0px !important; 
-    min-height: 40px !important; 
-    height: 40px !important;
-    width: 40px !important; 
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-/* 3. SHRINK THE MASSIVE DROPDOWN MENU */
-div[data-testid="stPopoverBody"] {
-    min-width: 220px !important;
-    width: 220px !important;
-    padding: 12px !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -229,7 +203,7 @@ if "delete_requested_for" not in st.session_state:
     st.session_state.delete_requested_for = None
 
 # -----------------------------
-# 3.5) POPUP CONFIRMATION UI
+# 3.5) DIALOG MENUS
 # -----------------------------
 @st.dialog("⚠️ Maximum Chats Reached")
 def confirm_new_chat_dialog(oldest_thread_id):
@@ -261,6 +235,7 @@ def confirm_delete_chat_dialog(thread_id_to_delete):
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Cancel", use_container_width=True):
+            st.session_state.delete_requested_for = None
             st.rerun()
     with col2:
         if st.button("Yes, Delete", type="primary", use_container_width=True):
@@ -270,11 +245,38 @@ def confirm_delete_chat_dialog(thread_id_to_delete):
                     coll_ref.document(thread_id_to_delete).delete()
                 except: pass
             
-            # If we deleted the chat we are currently looking at, start fresh
             if st.session_state.current_thread_id == thread_id_to_delete:
                 st.session_state.current_thread_id = str(uuid.uuid4())
                 st.session_state.messages = get_default_greeting()
+            st.session_state.delete_requested_for = None
             st.rerun()
+
+@st.dialog("⚙️ Chat Settings")
+def chat_settings_dialog(thread_data):
+    st.markdown("**Chat Metadata**")
+    subs = ", ".join(thread_data.get("metadata", {}).get("subjects", [])) or "None"
+    grds = ", ".join(thread_data.get("metadata", {}).get("grades", [])) or "None"
+    st.caption(f"📚 **Subjects:** {subs}")
+    st.caption(f"🎓 **Grades:** {grds}")
+    
+    st.divider()
+    
+    new_title = st.text_input("Rename Chat", value=thread_data["title"], key=f"ren_in_{thread_data['id']}")
+    if st.button("💾 Save Name", key=f"ren_btn_{thread_data['id']}", use_container_width=True):
+        coll_ref = get_threads_collection()
+        if coll_ref:
+            coll_ref.document(thread_data["id"]).set({
+                "title": new_title,
+                "user_edited_title": True
+            }, merge=True)
+        st.rerun()
+        
+    st.divider()
+    
+    if st.button("🗑️ Delete Chat", key=f"del_btn_set_{thread_data['id']}", type="primary", use_container_width=True):
+        # Set the state variable to trigger the delete dialog, then refresh to close this one
+        st.session_state.delete_requested_for = thread_data["id"]
+        st.rerun()
 
 # -----------------------------
 # 4) SIDEBAR UI (MULTIPLE CHATS)
@@ -320,37 +322,13 @@ with st.sidebar:
                     st.rerun()
                     
             with col2:
-                # Minimalist 3-dots icon popover with reduced size
-                with st.popover("", icon=":material/more_vert:", use_container_width=False):
-                    st.markdown("**Chat Metadata**")
-                    subs = ", ".join(t.get("metadata", {}).get("subjects", [])) or "None"
-                    grds = ", ".join(t.get("metadata", {}).get("grades", [])) or "None"
-                    st.caption(f"📚 **Subjects:** {subs}")
-                    st.caption(f"🎓 **Grades:** {grds}")
-                    
-                    st.divider()
-                    
-                    new_title = st.text_input("Rename Chat", value=t["title"], key=f"ren_in_{t['id']}")
-                    if st.button("💾 Save", key=f"ren_btn_{t['id']}", use_container_width=True):
-                        coll_ref = get_threads_collection()
-                        if coll_ref:
-                            coll_ref.document(t["id"]).set({
-                                "title": new_title,
-                                "user_edited_title": True
-                            }, merge=True)
-                        st.rerun()
-                        
-                    st.divider()
-                    
-                    # Store the ID in session state to trigger the dialog outside the sidebar loop
-                    if st.button("🗑️ Delete Chat", key=f"del_btn_{t['id']}", type="primary", use_container_width=True):
-                        st.session_state.delete_requested_for = t["id"]
-                        st.rerun()
+                # Using a plain button with just an icon means NO DROPDOWN ARROW!
+                if st.button("", icon=":material/more_vert:", key=f"set_btn_{t['id']}", use_container_width=True):
+                    chat_settings_dialog(t)
 
-# 🚨 Trigger the dialog outside the loop so Streamlit properly renders it
+# 🚨 Trigger the delete dialog outside the sidebar loop so Streamlit renders it properly
 if st.session_state.delete_requested_for:
     confirm_delete_chat_dialog(st.session_state.delete_requested_for)
-    st.session_state.delete_requested_for = None
 
 
 # Main app title
