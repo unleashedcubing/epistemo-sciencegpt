@@ -414,40 +414,41 @@ def md_inline_to_rl(text: str) -> str:
     return s
 
 # -----------------------------
-# 7) VISUAL GENERATORS (Dual-Layer)
+# 7) VISUAL GENERATORS (Imagen 3 Primary)
 # -----------------------------
 def generate_single_image(desc: str):
     clean_desc = re.sub(r"\s+", " ", (desc or "")).strip()
 
-    # ATTEMPT 1: Try the primary model (gemini-3-pro-image-preview)
+    # Try Imagen 3 FIRST, as it is the stable production model for images
     try:
-        img_resp = client.models.generate_content(
-            model="gemini-3-pro-image-preview",
-            contents=[clean_desc],
-            config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
-        )
-        for part in (img_resp.parts or []):
-            if getattr(part, "inline_data", None):
-                return part.inline_data.data
-                
-    except Exception as primary_e:
-        print(f"Primary model failed (likely 503 Overloaded). Falling back to Imagen. Error: {primary_e}")
-        
-        # ATTEMPT 2: Fall back to the stable Imagen 3 API
-        try:
-            fallback_response = client.models.generate_images(
-                model='imagen-3.0-generate-002',
-                prompt=clean_desc,
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,
-                    aspect_ratio="16:9" 
-                )
+        response = client.models.generate_images(
+            model='imagen-3.0-generate-002',  # Standard API string for Imagen 3
+            prompt=clean_desc,
+            config=types.GenerateImagesConfig(
+                number_of_images=1,
+                aspect_ratio="16:9" 
             )
-            for generated_image in fallback_response.generated_images:
+        )
+        for generated_image in response.generated_images:
+            if generated_image.image.image_bytes:
                 return generated_image.image.image_bytes
                 
-        except Exception as fallback_e:
-            print(f"Fallback model also failed: {fallback_e}")
+    except Exception as imagen_e:
+        print(f"Imagen 3 failed. Error: {imagen_e}")
+        
+        # Fall back to Gemini 3 Preview if Imagen fails
+        try:
+            img_resp = client.models.generate_content(
+                model="gemini-3-pro-image-preview",
+                contents=[clean_desc],
+                config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
+            )
+            for part in (img_resp.parts or []):
+                if getattr(part, "inline_data", None):
+                    return part.inline_data.data
+                    
+        except Exception as gemini_e:
+            print(f"Gemini 3 also failed: {gemini_e}")
             
     return None
 
