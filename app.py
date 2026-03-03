@@ -254,7 +254,7 @@ def save_chat_history():
     except Exception as e: st.toast(f"⚠️ Database Error: Could not save chat - {e}")
 
 # -----------------------------
-# PDF HELPER (Moved up for Tab 3 access)
+# PDF HELPER
 # -----------------------------
 def md_inline_to_rl(text: str) -> str:
     if text is None: return ""
@@ -512,7 +512,7 @@ if st.session_state.delete_requested_for:
     confirm_delete_chat_dialog(st.session_state.delete_requested_for)
 
 # -----------------------------
-# GEMINI INIT
+# GEMINI INIT & FILE HELPERS
 # -----------------------------
 api_key = os.environ.get("GOOGLE_API_KEY")
 if not api_key:
@@ -522,10 +522,93 @@ try: client = genai.Client(api_key=api_key)
 except Exception as e: st.error(f"🚨 Failed to initialize Gemini Client: {e}"); st.stop()
 
 
+def get_friendly_name(filename: str) -> str:
+    if not filename: return "Cambridge Textbook"
+    name = filename.replace(".pdf", "").replace(".PDF", "")
+    parts = name.split("_")
+    if len(parts) < 3 or parts[0] != "CIE": return filename
+    grade = parts[1]
+    book_type = "Workbook" if "WB" in parts else "Textbook"
+    if "ANSWERS" in parts: book_type += " Answers"
+    subject = "Science" if "Sci" in parts else "Math" if "Math" in parts else "English" if "Eng" in parts else "Subject"
+    part_str = " (Part 1)" if "1" in parts[2:] else " (Part 2)" if "2" in parts[2:] else ""
+    return f"Cambridge {subject} {book_type} {grade}{part_str}"
+
+@st.cache_resource(show_spinner=False)
+def upload_textbooks():
+    target_filenames = [
+        "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf", "CIE_9_SB_Eng.pdf", "CIE_9_WB_Eng.pdf",
+        "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf", "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
+        "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf", "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf",
+    ]
+    active_files = {"sci": [], "math": [], "eng": []}
+    msg_placeholder = st.empty()
+    with msg_placeholder.chat_message("assistant"):
+        st.markdown("""<div class="thinking-container"><span class="thinking-text">📚 Scanning Books...</span><div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>""", unsafe_allow_html=True)
+    existing_server_files = {f.display_name.lower(): f for f in client.files.list() if f.display_name}
+    pdf_map = {p.name.lower(): p for p in Path.cwd().rglob("*.pdf")}
+
+    for target_name in target_filenames:
+        t = target_name.lower()
+        if t in existing_server_files:
+            server_file = existing_server_files[t]
+            if server_file.state.name == "ACTIVE":
+                if "sci" in t: active_files["sci"].append(server_file)
+                elif "math" in t: active_files["math"].append(server_file)
+                elif "eng" in t: active_files["eng"].append(server_file)
+                continue
+        found_path = pdf_map.get(t)
+        if not found_path: continue
+        try:
+            uploaded = client.files.upload(file=str(found_path), config={"mime_type": "application/pdf", "display_name": found_path.name})
+            start = time.time()
+            while uploaded.state.name == "PROCESSING":
+                if time.time() - start > 180: break
+                time.sleep(3)
+                uploaded = client.files.get(name=uploaded.name)
+            if uploaded.state.name == "ACTIVE":
+                if "sci" in t: active_files["sci"].append(uploaded)
+                elif "math" in t: active_files["math"].append(uploaded)
+                elif "eng" in t: active_files["eng"].append(uploaded)
+        except Exception: continue
+    msg_placeholder.empty()
+    return active_files
+
+def select_relevant_books(query, file_dict):
+    qn = normalize_stage_text(query)
+    selected = []
+    is_math = any(k in qn for k in ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"])
+    is_sci = any(k in qn for k in ["science", "cell", "biology", "physics", "chemistry", "experiment", "gravity"])
+    is_eng = any(k in qn for k in ["english", "poem", "story", "essay", "writing", "grammar", "noun", "verb"])
+    
+    explicit_stage = infer_stage_from_text(qn)
+    stage_7 = (explicit_stage == "Stage 7")
+    stage_8 = (explicit_stage == "Stage 8")
+    stage_9 = (explicit_stage == "Stage 9")
+    has_subject = is_math or is_sci or is_eng
+    has_stage = stage_7 or stage_8 or stage_9
+    
+    if not has_subject and not has_stage: return []
+    if has_stage and not has_subject: is_math = is_sci = is_eng = True
+    if has_subject and not has_stage: stage_8 = True # default
+
+    def add_books(subject_key, active):
+        if not active: return
+        for book in file_dict.get(subject_key, []):
+            name = (book.display_name or "").lower()
+            if stage_7 and "cie_7" in name: selected.append(book)
+            if stage_8 and "cie_8" in name: selected.append(book)
+            if stage_9 and "cie_9" in name: selected.append(book)
+
+    add_books("math", is_math)
+    add_books("sci", is_sci)
+    add_books("eng", is_eng)
+    return selected[:3]
+
 # ==========================================
 # APP ROUTING: TEACHER DASHBOARD
 # ==========================================
-render_chat_interface = False # Only flip to True if student, or if Teacher clicked Tab 4
+render_chat_interface = False 
 
 if user_role == "teacher":
     st.markdown("<div class='big-title' style='color:#fc8404;'>👨‍🏫 helix.ai / Teacher</div>", unsafe_allow_html=True)
@@ -536,10 +619,19 @@ if user_role == "teacher":
     student_docs_raw = db.collection("users").where(filter=firestore.FieldFilter("teacher_id", "==", user_email)).stream()
     roster = list(student_docs_raw)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["⚙️ Class Management", "📊 Student Analytics", "📝 Assign Papers", "💬 AI Chat"])
+    # -----------------------------
+    # FIXED: Replaced tabs with a Radio menu to strictly isolate the AI Chat UI
+    # -----------------------------
+    teacher_menu = st.radio(
+        "Teacher Menu",
+        ["⚙️ Class Management", "📊 Student Analytics", "📝 Assign Papers", "💬 AI Chat"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    st.divider()
 
-    # ── TAB 1: CLASS MANAGEMENT
-    with tab1:
+    # ── MENU 1: CLASS MANAGEMENT
+    if teacher_menu == "⚙️ Class Management":
         st.subheader("🏫 Class Management")
         with st.form("create_class_form", clear_on_submit=True):
             cc1, cc2, cc3 = st.columns([0.4, 0.3, 0.3])
@@ -617,8 +709,8 @@ if user_role == "teacher":
                                     db.collection("users").document(s_email).update({"teacher_id": None})
                                     st.rerun()
 
-    # ── TAB 2: STUDENT ANALYTICS
-    with tab2:
+    # ── MENU 2: STUDENT ANALYTICS
+    elif teacher_menu == "📊 Student Analytics":
         st.subheader("📊 Student Insights & Learning Gaps")
         if not roster: st.info("Add students in the Class Management tab to view their analytics.")
         else:
@@ -651,6 +743,7 @@ if user_role == "teacher":
 
                 st.markdown(f"### 📋 Report for **{selected_name}**")
                 
+                my_classes_raw = list(db.collection("classes").where(filter=firestore.FieldFilter("created_by", "==", user_email)).stream())
                 t_subjs = []
                 for c in my_classes_raw:
                     if selected_student in c.to_dict().get("students", []):
@@ -714,8 +807,8 @@ if user_role == "teacher":
                             for q in recent_q[:5]: st.info(q)
                         else: st.write("No direct questions asked recently.")
 
-    # ── TAB 3: ASSIGN PAPERS
-    with tab3:
+    # ── MENU 3: ASSIGN PAPERS
+    elif teacher_menu == "📝 Assign Papers":
         st.subheader("📝 Assignment Creator")
         st.markdown("#### Step 1: Configure Paper")
         a_col1, a_col2 = st.columns(2)
@@ -740,14 +833,43 @@ if user_role == "teacher":
         """
 
         if st.button("🤖 Generate with Helix AI", use_container_width=True, type="primary"):
-            with st.spinner("Helix is writing your question paper..."):
+            # 1. Load books if missing
+            if "textbook_handles" not in st.session_state:
+                st.session_state.textbook_handles = upload_textbooks()
+                
+            with st.spinner(f"Reading {assign_grade} {assign_subject} curriculum and writing paper..."):
                 try:
-                    gen_prompt = f"Generate a formal CIE {assign_subject} question paper for {assign_stage} ({assign_grade}) students. Difficulty: {assign_difficulty}. Marks: {assign_marks}. Instructions: {assign_extra if assign_extra else 'None'}. Append [PDF_READY] at the end."
-                    gen_resp = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=[gen_prompt],
-                        config=types.GenerateContentConfig(system_instruction=PAPER_SYSTEM, temperature=0.2, max_output_tokens=4096),
+                    # 2. Get specific textbooks
+                    query_for_books = f"{assign_subject} {assign_grade}"
+                    relevant_books = select_relevant_books(query_for_books, st.session_state.textbook_handles)
+                    
+                    # 3. Build Payload
+                    paper_contents = []
+                    for book in relevant_books:
+                        friendly = get_friendly_name(book.display_name)
+                        paper_contents.append(types.Part.from_text(text=f"[Curriculum Source: {friendly}]"))
+                        paper_contents.append(types.Part.from_uri(file_uri=book.uri, mime_type="application/pdf"))
+                        
+                    gen_prompt = (
+                        f"Using ONLY the provided Cambridge textbooks, generate a formal CIE {assign_subject} question paper "
+                        f"for {assign_stage} ({assign_grade}) students. \n"
+                        f"Difficulty: {assign_difficulty}. Total marks: {assign_marks}. \n"
+                        f"Instructions: {assign_extra if assign_extra else 'None'}. \n"
+                        f"Do NOT invent topics outside this syllabus. Append [PDF_READY] at the end."
                     )
+                    paper_contents.append(types.Part.from_text(text=gen_prompt))
+
+                    # 4. Generate with Pro and low temperature to prevent hallucinations
+                    gen_resp = client.models.generate_content(
+                        model="gemini-2.5-pro",
+                        contents=paper_contents,
+                        config=types.GenerateContentConfig(
+                            system_instruction=PAPER_SYSTEM, 
+                            temperature=0.1, 
+                            max_output_tokens=8000
+                        ),
+                    )
+                    
                     gen_paper = safe_response_text(gen_resp).strip()
                     st.session_state["draft_paper"] = gen_paper
                     st.session_state["draft_title"] = assign_title or f"{assign_subject} {assign_grade} Paper"
@@ -766,6 +888,7 @@ if user_role == "teacher":
 
             st.divider()
             push_mode = st.radio("Push to:", ["Entire Class", "Individual Student"], horizontal=True)
+            my_classes_raw = list(db.collection("classes").where(filter=firestore.FieldFilter("created_by", "==", user_email)).stream())
             if push_mode == "Entire Class":
                 class_options = {c.id: c.to_dict().get("students", []) for c in my_classes_raw}
                 if not class_options: st.warning("You haven't created any classes yet.")
@@ -786,13 +909,10 @@ if user_role == "teacher":
 
             if st.button("🗑️ Discard Draft", use_container_width=True): del st.session_state["draft_paper"]; st.rerun()
 
-    # ── TAB 4: AI CHAT
-    with tab4:
-        st.markdown("Use the AI chat below ⬇️ to generate lesson plans or test ideas.")
-        # If the user clicks Tab 4, we want the chat interface to render. 
-        # Streamlit doesn't expose active tab, but we can just render it below the tabs for teachers.
+    # ── MENU 4: AI CHAT
+    elif teacher_menu == "💬 AI Chat":
+        st.info("💡 You are chatting with Helix as a Teacher. History is saved to your sidebar.")
         render_chat_interface = True 
-        st.divider()
 
 else:
     # Student / Guest view always gets the chat interface
@@ -837,6 +957,122 @@ if render_chat_interface:
     - CITATION RULE: List the source(s) only once at the very bottom.
     - PDF TRIGGER: If, and ONLY IF, you generated a full formal question paper, append [PDF_READY] at the very end.
 
+    ### RULE 4: STAGE 9 ENGLISH SYLLABUS:
+    Chapter 1 • Writing to explore and reflect
+1.1 What is travel writing?
+
+1.2 Selecting and noting key information in travel texts
+
+1.3 Comparing tone and register in travel texts
+
+1.4 Responding to travel writing
+
+1.5 Understanding grammatical choices in travel writing
+
+1.6 Varying sentences for effect
+
+1.7 Boost your vocabulary
+
+1.8 Creating a travel account
+
+Chapter 2 • Writing to inform and explain
+2.1 Matching informative texts to audience and purpose
+
+2.2 Using formal and informal language in information texts
+
+2.3 Comparing information texts
+
+2.4 Using discussion to prepare for a written assignment
+
+2.5 Planning information texts to suit different audiences
+
+2.6 Shaping paragraphs to suit audience and purpose
+
+2.7 Crafting sentences for a range of effects
+
+2.8 Making explanations precise and concise
+
+2.9 Writing encyclopedia entries
+
+Chapter 3 • Writing to argue and persuade
+3.1 Reviewing persuasive techniques
+
+3.2 Commenting on use of language to persuade
+
+3.3 Exploring layers of persuasive language
+
+3.4 Responding to the use of persuasive language
+
+3.5 Adapting grammar choices to create effects in argument writing
+
+3.6 Organising a whole argument effectively
+
+3.7 Organising an argument within each paragraph
+
+3.8 Presenting and responding to a question
+
+3.9 Producing an argumentative essay
+
+Chapter 4 • Descriptive writing
+4.1 Analysing how atmospheres are created
+
+4.2 Developing analysis of a description
+
+4.3 Analysing atmospheric descriptions
+
+4.4 Using images to inspire description
+
+4.5 Using language to develop an atmosphere
+
+4.6 Sustaining a cohesive atmosphere
+
+4.7 Creating atmosphere through punctuation
+
+4.8 Using structural devices to build up atmosphere
+
+4.9 Producing a powerful description
+
+Chapter 5 • Narrative writing
+5.1 Understanding story openings
+
+5.2 Exploring setting and atmosphere
+
+5.3 Introducing characters in stories
+
+5.4 Responding to powerful narrative
+
+5.5 Pitching a story
+
+5.6 Creating narrative suspense and climax
+
+5.7 Creating character
+
+5.8 Using tenses in narrative
+
+5.9 Using pronouns and sentence order for effect
+
+5.10 Creating a thriller
+
+Chapter 6 • Writing to analyse and compare
+6.1 Analysing implicit meaning in non-fiction texts
+
+6.2 Analysing how a play's key elements create different effects
+
+6.3 Using discussion skills to analyse carefully
+
+6.4 Comparing effectively through punctuation and grammar
+
+6.5 Analysing two texts
+
+Chapter 7 • Testing your skills
+7.1 Reading and writing questions on non-fiction texts
+
+7.2 Reading and writing questions on fiction texts
+
+7.3 Assessing your progress: non-fiction reading and writing
+
+7.4 Assessing your progress: fiction reading and writing
+    
     ### RULE 5: VISUAL SYNTAX (STRICT)
     - For diagrams: IMAGE_GEN: [Detailed description of the image, educational, white background]
     - For pie charts: PIE_CHART: [Label1:Value1, Label2:Value2]
@@ -849,78 +1085,10 @@ if render_chat_interface:
     At the VERY END of your response, output a hidden JSON block exactly like this:
     [ANALYTICS: {"topic": "Topic Name", "understanding_level": "Good/Average/Poor", "weak_point": "Specific gap, or None", "question_asked": "The user's question, or None"}]
     Never mention this analytics block in your natural language response.
+
+    ### RULE 8: BOOKS NAME:
+    The books are 1 grade ahead, so if the user gives grade 6, you have to search stage 7 books. Grade 7, stage 8 books. Grade 8, stage 9 books. Remember to always mention the grade not stage, even if the book you're searching is state seven, mention grade six in the papers or in the reply. I made an error while renaming, and now I can't rename them all.
     """
-
-    @st.cache_resource(show_spinner=False)
-    def upload_textbooks():
-        target_filenames = [
-            "CIE_9_WB_Sci.pdf", "CIE_9_SB_Math.pdf", "CIE_9_SB_2_Sci.pdf", "CIE_9_SB_1_Sci.pdf", "CIE_9_SB_Eng.pdf", "CIE_9_WB_Eng.pdf",
-            "CIE_8_WB_Sci.pdf", "CIE_8_WB_ANSWERS_Math.pdf", "CIE_8_SB_Math.pdf", "CIE_8_SB_2_Sci.pdf", "CIE_8_SB_2_Eng.pdf", "CIE_8_SB_1_Sci.pdf", "CIE_8_SB_1_Eng.pdf",
-            "CIE_7_WB_Sci.pdf", "CIE_7_WB_Math.pdf", "CIE_7_WB_Eng.pdf", "CIE_7_WB_ANSWERS_Math.pdf", "CIE_7_SB_Math.pdf", "CIE_7_SB_2_Sci.pdf", "CIE_7_SB_2_Eng.pdf", "CIE_7_SB_1_Sci.pdf", "CIE_7_SB_1_Eng.pdf",
-        ]
-        active_files = {"sci": [], "math": [], "eng": []}
-        msg_placeholder = st.empty()
-        with msg_placeholder.chat_message("assistant"):
-            st.markdown("""<div class="thinking-container"><span class="thinking-text">📚 Scanning Books...</span><div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>""", unsafe_allow_html=True)
-        existing_server_files = {f.display_name.lower(): f for f in client.files.list() if f.display_name}
-        pdf_map = {p.name.lower(): p for p in Path.cwd().rglob("*.pdf")}
-
-        for target_name in target_filenames:
-            t = target_name.lower()
-            if t in existing_server_files:
-                server_file = existing_server_files[t]
-                if server_file.state.name == "ACTIVE":
-                    if "sci" in t: active_files["sci"].append(server_file)
-                    elif "math" in t: active_files["math"].append(server_file)
-                    elif "eng" in t: active_files["eng"].append(server_file)
-                    continue
-            found_path = pdf_map.get(t)
-            if not found_path: continue
-            try:
-                uploaded = client.files.upload(file=str(found_path), config={"mime_type": "application/pdf", "display_name": found_path.name})
-                start = time.time()
-                while uploaded.state.name == "PROCESSING":
-                    if time.time() - start > 180: break
-                    time.sleep(3)
-                    uploaded = client.files.get(name=uploaded.name)
-                if uploaded.state.name == "ACTIVE":
-                    if "sci" in t: active_files["sci"].append(uploaded)
-                    elif "math" in t: active_files["math"].append(uploaded)
-                    elif "eng" in t: active_files["eng"].append(uploaded)
-            except Exception: continue
-        msg_placeholder.empty()
-        return active_files
-
-    def select_relevant_books(query, file_dict):
-        qn = normalize_stage_text(query)
-        selected = []
-        is_math = any(k in qn for k in ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"])
-        is_sci = any(k in qn for k in ["science", "cell", "biology", "physics", "chemistry", "experiment", "gravity"])
-        is_eng = any(k in qn for k in ["english", "poem", "story", "essay", "writing", "grammar", "noun", "verb"])
-        
-        explicit_stage = infer_stage_from_text(qn)
-        stage_7 = (explicit_stage == "Stage 7")
-        stage_8 = (explicit_stage == "Stage 8")
-        stage_9 = (explicit_stage == "Stage 9")
-        has_subject = is_math or is_sci or is_eng
-        has_stage = stage_7 or stage_8 or stage_9
-        
-        if not has_subject and not has_stage: return []
-        if has_stage and not has_subject: is_math = is_sci = is_eng = True
-        if has_subject and not has_stage: stage_8 = True # default
-
-        def add_books(subject_key, active):
-            if not active: return
-            for book in file_dict.get(subject_key, []):
-                name = (book.display_name or "").lower()
-                if stage_7 and "cie_7" in name: selected.append(book)
-                if stage_8 and "cie_8" in name: selected.append(book)
-                if stage_9 and "cie_9" in name: selected.append(book)
-
-        add_books("math", is_math)
-        add_books("sci", is_sci)
-        add_books("eng", is_eng)
-        return selected[:3]
 
     if is_authenticated and user_role == "student" and db is not None:
         pending_assignments = db.collection("users").document(auth_object.email).collection("assignments").where(filter=firestore.FieldFilter("status", "==", "pending")).stream()
@@ -977,7 +1145,6 @@ if render_chat_interface:
     chat_input_data = st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"])
 
     if chat_input_data:
-        # LAZY LOAD BOOKS ONLY WHEN CHATTING
         if "textbook_handles" not in st.session_state:
             st.session_state.textbook_handles = upload_textbooks()
 
@@ -1013,7 +1180,7 @@ if render_chat_interface:
                     book_names = [get_friendly_name(b.display_name) for b in relevant_books]
                     st.caption(f"🔍 *Scanning Curriculum: {', '.join(book_names)}*")
                 else:
-                    st.caption("🔍 *Analyzing attached file...*" if has_attachment else "⚡ *Quick reply (General Knowledge)*")
+                    st.caption("🔍 *Analyzing attached file...*" if has_attachment else "⚡ General Knowledge")
 
                 thinking_placeholder.markdown("""<div class="thinking-container"><span class="thinking-text">🧠 Reading & Looking...</span><div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>""", unsafe_allow_html=True)
 
@@ -1082,8 +1249,48 @@ if render_chat_interface:
                 if visual_prompts:
                     img_thinking = st.empty()
                     img_thinking.markdown("""<div class="thinking-container"><span class="thinking-text">🖌️ Processing diagrams & charts...</span><div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>""", unsafe_allow_html=True)
+                    # Helper function processing needed to be defined earlier; relying on previously provided ones
+                    def process_visual_wrapper(vp):
+                        # Simple wrapper for concurrency
+                        try:
+                            v_type, v_data = vp
+                            if v_type == "IMAGE_GEN":
+                                try:
+                                    img_resp = client.models.generate_content(
+                                        model="gemini-3.1-flash-image-preview",
+                                        contents=[v_data],
+                                        config=types.GenerateContentConfig(
+                                            response_modalities=["TEXT", "IMAGE"],
+                                            image_config=types.ImageConfig(aspect_ratio="16:9", image_size="2K")
+                                        ),
+                                    )
+                                    for part in (img_resp.parts or []):
+                                        if getattr(part, "inline_data", None):
+                                            return part.inline_data.data
+                                except: return None
+                            elif v_type == "PIE_CHART":
+                                try:
+                                    labels, sizes = [], []
+                                    for item in str(v_data).split(","):
+                                        if ":" in item:
+                                            k, v = item.split(":", 1)
+                                            labels.append(k.strip())
+                                            sizes.append(float(re.sub(r"[^\d\.]", "", v)))
+                                    if not labels or not sizes or len(labels) != len(sizes): return None
+                                    fig = Figure(figsize=(5, 5), dpi=200)
+                                    FigureCanvas(fig)
+                                    ax = fig.add_subplot(111)
+                                    theme_colors = ["#00d4ff", "#fc8404", "#2ecc71", "#9b59b6", "#f1c40f", "#e74c3c"]
+                                    ax.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=140, colors=theme_colors[:len(labels)], textprops={"color": "black", "fontsize": 9})
+                                    ax.axis("equal")
+                                    buf = BytesIO()
+                                    fig.savefig(buf, format="png", bbox_inches="tight", transparent=True)
+                                    return buf.getvalue()
+                                except: return None
+                        except: return None
+
                     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-                        generated_images = list(executor.map(process_visual, visual_prompts))
+                        generated_images = list(executor.map(process_visual_wrapper, visual_prompts))
                     img_thinking.empty()
                     for img in generated_images:
                         if img is None: bot_text += "\n\n⚠️ *Helix tried to draw a diagram here, but the image generator is currently overloaded. Please try again later.*"
