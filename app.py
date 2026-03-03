@@ -4,8 +4,6 @@ import time
 import re
 import uuid
 import concurrent.futures
-import platform
-import sys
 from pathlib import Path
 from io import BytesIO
 
@@ -155,7 +153,7 @@ def save_chat_history():
             "role": str(role),
             "content": content_str,
             "is_greeting": bool(msg.get("is_greeting", False)),
-            "is_downloadable": bool(msg.get("is_downloadable", False)),  # <-- FIX: persist pdf button
+            "is_downloadable": bool(msg.get("is_downloadable", False)),
         })
 
     data = {
@@ -233,12 +231,6 @@ if "messages" not in st.session_state:
 
 if "delete_requested_for" not in st.session_state:
     st.session_state.delete_requested_for = None
-
-# Debug state
-if "debug_enabled" not in st.session_state:
-    st.session_state.debug_enabled = False
-if "debug_last_image_test" not in st.session_state:
-    st.session_state.debug_last_image_test = None
 
 # -----------------------------
 # 3.5) DIALOG MENUS
@@ -318,101 +310,7 @@ def chat_settings_dialog(thread_data):
         st.rerun()
 
 # -----------------------------
-# 5) INITIALIZE GEMINI (moved up so Debug panel can use it)
-# -----------------------------
-api_key = os.environ.get("GOOGLE_API_KEY")
-if not api_key:
-    if "GOOGLE_API_KEY" in st.secrets:
-        api_key = st.secrets["GOOGLE_API_KEY"]
-    else:
-        st.error("🚨 Critical Error: GOOGLE_API_KEY not found.")
-        st.stop()
-
-try:
-    client = genai.Client(api_key=api_key)
-except Exception as e:
-    st.error(f"🚨 Failed to initialize Gemini Client: {e}")
-    st.stop()
-
-# -----------------------------
-# Debug helpers (Gemini 3 image)
-# -----------------------------
-def _extract_inline_image_bytes_from_resp(img_resp):
-    imgs = []
-    try:
-        for part in (getattr(img_resp, "parts", None) or []):
-            inline = getattr(part, "inline_data", None)
-            if inline is not None and getattr(inline, "data", None) is not None:
-                imgs.append(inline.data)
-    except Exception:
-        pass
-
-    try:
-        for cand in (getattr(img_resp, "candidates", None) or []):
-            content = getattr(cand, "content", None)
-            for part in (getattr(content, "parts", None) or []):
-                inline = getattr(part, "inline_data", None)
-                if inline is not None and getattr(inline, "data", None) is not None:
-                    imgs.append(inline.data)
-    except Exception:
-        pass
-
-    return imgs
-
-def run_gemini3_image_smoke_test():
-    info = {
-        "ok": False,
-        "error": None,
-        "model": "gemini-3-pro-image-preview",
-        "parts_count": None,
-        "candidates_count": None,
-        "inline_images_found": 0,
-        "first_image_type": None,
-        "first_image_len": None,
-        "text_preview": None,
-        "response_type": None,
-        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-    }
-
-    try:
-        prompt = (
-            "Generate a simple educational diagram on a white background: "
-            "a blue circle with '-' label 'electron' on the left, and a red circle with '+' label 'positron' on the right. "
-            "No text outside the labels, clean vector-like look."
-        )
-
-        resp = client.models.generate_content(
-            model="gemini-3-pro-image-preview",
-            contents=[prompt],
-            config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
-        )
-
-        info["response_type"] = str(type(resp))
-        info["parts_count"] = len(getattr(resp, "parts", None) or [])
-        info["candidates_count"] = len(getattr(resp, "candidates", None) or [])
-
-        imgs = _extract_inline_image_bytes_from_resp(resp)
-        info["inline_images_found"] = len(imgs)
-
-        if imgs:
-            b0 = imgs[0]
-            info["first_image_type"] = str(type(b0))
-            try:
-                info["first_image_len"] = len(b0)
-            except Exception:
-                info["first_image_len"] = None
-
-            info["ok"] = True
-        else:
-            info["text_preview"] = (safe_response_text(resp) or "")[:600]
-
-    except Exception as e:
-        info["error"] = str(e)
-
-    return info
-
-# -----------------------------
-# 4) SIDEBAR UI (MULTIPLE CHATS) + DEBUG PANEL
+# 4) SIDEBAR UI (MULTIPLE CHATS)
 # -----------------------------
 with st.sidebar:
     st.title("Account Settings")
@@ -427,37 +325,6 @@ with st.sidebar:
             st.logout()
 
     st.divider()
-
-    # ---- DEBUG PANEL ----
-    with st.expander("🛠 Debug (Gemini 3 Image)", expanded=False):
-        st.session_state.debug_enabled = st.checkbox("Enable debug mode", value=st.session_state.debug_enabled)
-
-        # Versions (best-effort)
-        try:
-            import importlib.metadata as md
-            st.caption(f"Python: {sys.version.split()[0]} | OS: {platform.system()} {platform.release()}")
-            try:
-                st.caption(f"streamlit: {md.version('streamlit')}")
-            except Exception:
-                pass
-            try:
-                st.caption(f"google-genai: {md.version('google-genai')}")
-            except Exception:
-                # Sometimes package name differs in env; ignore
-                pass
-        except Exception:
-            pass
-
-        if st.button("Run Gemini-3 Image Smoke Test", use_container_width=True):
-            st.session_state.debug_last_image_test = run_gemini3_image_smoke_test()
-
-        if st.session_state.debug_last_image_test:
-            res = st.session_state.debug_last_image_test
-            if res.get("ok"):
-                st.success("Image model returned an inline image ✅")
-            else:
-                st.warning("No inline image returned ⚠️ (check details)")
-            st.json(res)
 
     sidebar_threads = get_all_threads() if is_authenticated else []
 
@@ -497,6 +364,23 @@ st.markdown("<div class='big-title'>📚 helix.ai</div>", unsafe_allow_html=True
 st.markdown("<div class='subtitle'>Your CIE Tutor for Grade 6-8!</div>", unsafe_allow_html=True)
 
 # -----------------------------
+# 5) INITIALIZE GEMINI
+# -----------------------------
+api_key = os.environ.get("GOOGLE_API_KEY")
+if not api_key:
+    if "GOOGLE_API_KEY" in st.secrets:
+        api_key = st.secrets["GOOGLE_API_KEY"]
+    else:
+        st.error("🚨 Critical Error: GOOGLE_API_KEY not found.")
+        st.stop()
+
+try:
+    client = genai.Client(api_key=api_key)
+except Exception as e:
+    st.error(f"🚨 Failed to initialize Gemini Client: {e}")
+    st.stop()
+
+# -----------------------------
 # 6) HELPERS & LATEX CLEANER
 # -----------------------------
 def get_friendly_name(filename: str) -> str:
@@ -530,20 +414,41 @@ def md_inline_to_rl(text: str) -> str:
     return s
 
 # -----------------------------
-# 7) VISUAL GENERATORS (baseline behavior)
+# 7) VISUAL GENERATORS (Dual-Layer)
 # -----------------------------
 def generate_single_image(desc: str):
+    clean_desc = re.sub(r"\s+", " ", (desc or "")).strip()
+
+    # ATTEMPT 1: Try the primary model (gemini-3-pro-image-preview)
     try:
         img_resp = client.models.generate_content(
             model="gemini-3-pro-image-preview",
-            contents=[desc],
+            contents=[clean_desc],
             config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
         )
         for part in (img_resp.parts or []):
             if getattr(part, "inline_data", None):
                 return part.inline_data.data
-    except Exception as e:
-        print(f"Image gen error: {e}")
+                
+    except Exception as primary_e:
+        print(f"Primary model failed (likely 503 Overloaded). Falling back to Imagen. Error: {primary_e}")
+        
+        # ATTEMPT 2: Fall back to the stable Imagen 3 API
+        try:
+            fallback_response = client.models.generate_images(
+                model='imagen-3.0-generate-002',
+                prompt=clean_desc,
+                config=types.GenerateImagesConfig(
+                    number_of_images=1,
+                    aspect_ratio="16:9" 
+                )
+            )
+            for generated_image in fallback_response.generated_images:
+                return generated_image.image.image_bytes
+                
+        except Exception as fallback_e:
+            print(f"Fallback model also failed: {fallback_e}")
+            
     return None
 
 def generate_pie_chart(data_str: str):
@@ -1036,11 +941,16 @@ if chat_input_data:
                         <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
                     </div>
                 """, unsafe_allow_html=True)
+                
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                     generated_images = list(executor.map(process_visual, visual_prompts))
                 img_thinking.empty()
 
-            # PDF button detection (tag OR question-paper pattern)
+                for i, img in enumerate(generated_images):
+                    if img is None:
+                        bot_text += f"\n\n⚠️ *Helix tried to draw a diagram here, but the image generator is currently overloaded (High Demand). Please try again later.*"
+
+            # PDF button detection
             is_downloadable = (
                 "[PDF_READY]" in bot_text or
                 ("## Mark Scheme" in bot_text and re.search(r"\[\d+\]", bot_text) is not None)
