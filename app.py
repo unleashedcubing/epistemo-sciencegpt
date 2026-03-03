@@ -13,11 +13,9 @@ from PIL import Image
 from google import genai
 from google.genai import types
 
-# Firebase Firestore Imports
 from google.cloud import firestore
 from google.oauth2 import service_account
 
-# ReportLab PDF
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -29,7 +27,6 @@ from reportlab.lib.utils import ImageReader
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from reportlab.lib import colors
 
-# Matplotlib (Python-native charts)
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
@@ -53,11 +50,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Fetch teacher code from secrets
 TEACHER_VERIFICATION_CODE = st.secrets.get("TEACHER_VERIFICATION_CODE", "7nI9sL0")
 
 # -----------------------------
-# 1.5) STAGE NORMALIZATION HELPER
+# 1.5) STAGE NORMALIZATION
 # -----------------------------
 NUM_WORDS = {
     "six": "6", "seven": "7", "eight": "8", "nine": "9",
@@ -71,7 +67,7 @@ def normalize_stage_text(s: str) -> str:
     return s
 
 # -----------------------------
-# 2) GUEST MODE & NATIVE GOOGLE LOGIN
+# 2) AUTH & FIRESTORE
 # -----------------------------
 if hasattr(st, "user"):
     auth_object = st.user
@@ -83,7 +79,6 @@ else:
 
 is_authenticated = getattr(auth_object, "is_logged_in", False)
 
-# Initialize Firestore Connection
 @st.cache_resource
 def get_firestore_client():
     if "firebase" in st.secrets:
@@ -94,17 +89,50 @@ def get_firestore_client():
 
 db = get_firestore_client()
 
-# Fetch User Profile & Role
 def get_user_profile(email):
     if not db: return {"role": "student"}
     doc_ref = db.collection("users").document(email)
     doc = doc_ref.get()
     if doc.exists:
-        return doc.to_dict()
+        profile = doc.to_dict()
+        if not profile.get("display_name") and is_authenticated:
+            google_name = getattr(auth_object, "name", None) or email.split("@")[0]
+            doc_ref.update({"display_name": google_name})
+            profile["display_name"] = google_name
+        return profile
     else:
-        default_profile = {"role": "student", "teacher_id": None}
+        google_name = getattr(auth_object, "name", None) or email.split("@")[0] if is_authenticated else email.split("@")[0]
+        default_profile = {
+            "role": "student",
+            "teacher_id": None,
+            "display_name": google_name,
+            "grade": None
+        }
         doc_ref.set(default_profile)
         return default_profile
+
+def create_global_class(class_name, teacher_email):
+    if not db: return False, "Database error."
+    clean_name = class_name.strip().upper()
+    if not clean_name:
+        return False, "Class name cannot be empty."
+    class_ref = db.collection("classes").document(clean_name)
+
+    @firestore.transactional
+    def check_and_create(transaction, ref):
+        snapshot = ref.get(transaction=transaction)
+        if snapshot.exists:
+            return False, f"Class '{clean_name}' already exists in the system!"
+        transaction.set(ref, {
+            "created_by": teacher_email,
+            "created_at": time.time(),
+            "students": [],
+            "subjects": []
+        })
+        return True, f"Class '{clean_name}' successfully created!"
+
+    transaction = db.transaction()
+    return check_and_create(transaction, class_ref)
 
 user_role = "guest"
 if is_authenticated:
@@ -112,7 +140,9 @@ if is_authenticated:
     user_profile = get_user_profile(user_email)
     user_role = user_profile.get("role", "student")
 
-# Firebase Threading Helper Functions
+# -----------------------------
+# THREAD HELPERS
+# -----------------------------
 def get_threads_collection():
     if is_authenticated and hasattr(auth_object, "email") and db is not None:
         return db.collection("users").document(auth_object.email).collection("threads")
@@ -158,13 +188,10 @@ def load_chat_history(thread_id):
 
 def compress_image_for_db(image_bytes: bytes) -> str:
     try:
-        if not image_bytes:
-            return None
+        if not image_bytes: return None
         img = Image.open(BytesIO(image_bytes))
-        if img.mode != 'RGB':
-            img = img.convert('RGB')
-        max_size = (1280, 720)
-        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        if img.mode != 'RGB': img = img.convert('RGB')
+        img.thumbnail((1280, 720), Image.Resampling.LANCZOS)
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=60, optimize=True)
         return base64.b64encode(buf.getvalue()).decode('utf-8')
@@ -174,8 +201,7 @@ def compress_image_for_db(image_bytes: bytes) -> str:
 
 def save_chat_history():
     coll_ref = get_threads_collection()
-    if not coll_ref:
-        return 
+    if not coll_ref: return
 
     current_id = st.session_state.current_thread_id
     safe_messages = []
@@ -194,22 +220,17 @@ def save_chat_history():
                 detected_subjects.add("Science")
             if any(k in q for k in ["english", "poem", "story", "essay", "writing", "grammar", "noun", "verb"]):
                 detected_subjects.add("English")
-            
             qn = normalize_stage_text(content_str)
-            if bool(re.search(r"\bstage\W*7\b", qn) or re.search(r"\bgrade\W*6\b", qn) or re.search(r"\byear\W*7\b", qn)):
-                detected_grades.add("Stage 7")
-            if bool(re.search(r"\bstage\W*8\b", qn) or re.search(r"\bgrade\W*7\b", qn) or re.search(r"\byear\W*8\b", qn)):
-                detected_grades.add("Stage 8")
-            if bool(re.search(r"\bstage\W*9\b", qn) or re.search(r"\bgrade\W*8\b", qn) or re.search(r"\byear\W*9\b", qn)):
-                detected_grades.add("Stage 9")
+            if re.search(r"\bstage\W*7\b", qn) or re.search(r"\bgrade\W*6\b", qn): detected_grades.add("Stage 7")
+            if re.search(r"\bstage\W*8\b", qn) or re.search(r"\bgrade\W*7\b", qn): detected_grades.add("Stage 8")
+            if re.search(r"\bstage\W*9\b", qn) or re.search(r"\bgrade\W*8\b", qn): detected_grades.add("Stage 9")
 
         db_images = []
         if msg.get("images"):
             for img_bytes in msg["images"]:
                 if img_bytes:
                     compressed_b64 = compress_image_for_db(img_bytes)
-                    if compressed_b64:
-                        db_images.append(compressed_b64)
+                    if compressed_b64: db_images.append(compressed_b64)
         elif msg.get("db_images"):
             db_images = msg["db_images"]
 
@@ -224,19 +245,15 @@ def save_chat_history():
     data = {
         "messages": safe_messages,
         "updated_at": time.time(),
-        "metadata": {
-            "subjects": list(detected_subjects),
-            "grades": list(detected_grades),
-        },
+        "metadata": {"subjects": list(detected_subjects), "grades": list(detected_grades)},
     }
-
     try:
         coll_ref.document(current_id).set(data, merge=True)
     except Exception as e:
         st.toast(f"⚠️ Database Error: Could not save chat - {e}")
 
 # -----------------------------
-# 2.5) AUTO-TITLE GENERATOR
+# 2.5) AUTO-TITLE
 # -----------------------------
 def safe_response_text(resp) -> str:
     try:
@@ -257,20 +274,16 @@ def generate_chat_title(client, messages):
     try:
         user_msgs = [m.get("content", "") for m in messages if m.get("role") == "user"]
         if not user_msgs: return "New Chat"
-
         context_text = "\n".join(user_msgs[-3:])
         prompt = (
             "Summarize this conversation context into a very short, punchy chat title (maximum 4 words). "
-            "Do not use quotes or punctuation. Context: "
-            f"{context_text}"
+            "Do not use quotes or punctuation. Context: " + context_text
         )
-
         response = client.models.generate_content(
             model="gemini-2.5-flash",
             contents=[prompt],
             config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=15),
         )
-
         title = safe_response_text(response).strip().replace('"', '').replace("'", "")
         return title if title else "New Chat"
     except Exception as e:
@@ -278,25 +291,22 @@ def generate_chat_title(client, messages):
         return "New Chat"
 
 # -----------------------------
-# 3) INITIALIZE SESSION STATE
+# 3) SESSION STATE
 # -----------------------------
 if "current_thread_id" not in st.session_state:
     st.session_state.current_thread_id = str(uuid.uuid4())
-
 if "messages" not in st.session_state:
     st.session_state.messages = get_default_greeting()
-
 if "delete_requested_for" not in st.session_state:
     st.session_state.delete_requested_for = None
 
 # -----------------------------
-# 3.5) DIALOG MENUS
+# 3.5) DIALOGS
 # -----------------------------
 @st.dialog("⚠️ Maximum Chats Reached")
 def confirm_new_chat_dialog(oldest_thread_id):
     st.write("You have hit the maximum limit of **15 saved chats**.")
     st.write("If you create a new chat, your oldest chat will be permanently deleted.")
-    st.write("Are you sure you want to do this?")
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Cancel", use_container_width=True): st.rerun()
@@ -313,7 +323,6 @@ def confirm_new_chat_dialog(oldest_thread_id):
 @st.dialog("🗑️ Delete Chat")
 def confirm_delete_chat_dialog(thread_id_to_delete):
     st.write("Are you sure you want to permanently delete this chat?")
-    st.write("*This action cannot be undone.*")
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Cancel", use_container_width=True):
@@ -351,7 +360,7 @@ def chat_settings_dialog(thread_data):
         st.rerun()
 
 # -----------------------------
-# 4) SIDEBAR UI & ROLE MANAGEMENT
+# 4) SIDEBAR
 # -----------------------------
 with st.sidebar:
     st.title("Account Settings")
@@ -364,24 +373,26 @@ with st.sidebar:
         st.success(f"Welcome back, **{user_name}**! ({user_role.capitalize()})")
         if st.button("Log out"):
             st.logout()
-            
+
         st.divider()
 
-        # TEACHER VERIFICATION
         if user_role == "student":
-            with st.expander("🎓 Are you a Teacher?"):
-                st.caption("Enter your school's verification code to unlock the Teacher Dashboard.")
-                code_input = st.text_input("Teacher Code", type="password")
-                if st.button("Verify Code"):
-                    if code_input == TEACHER_VERIFICATION_CODE:
-                        db.collection("users").document(user_email).update({"role": "teacher"})
-                        st.success("Verified! Refreshing app...")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("Invalid Code.")
+            assigned_teacher = user_profile.get("teacher_id", None)
+            if not assigned_teacher:
+                with st.expander("🎓 Are you a Teacher?"):
+                    st.caption("Enter your school's verification code to unlock the Teacher Dashboard.")
+                    code_input = st.text_input("Teacher Code", type="password")
+                    if st.button("Verify Code"):
+                        if code_input == TEACHER_VERIFICATION_CODE:
+                            db.collection("users").document(user_email).update({"role": "teacher"})
+                            st.success("Verified! Refreshing app...")
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("Invalid Code.")
+            else:
+                st.info(f"🏫 Connected to classroom:\n**{assigned_teacher}**")
 
-    # CHAT HISTORY (Visible to both Students and Teachers)
     sidebar_threads = get_all_threads() if is_authenticated else []
 
     if st.button("➕ New Chat", use_container_width=True):
@@ -397,7 +408,6 @@ with st.sidebar:
         st.subheader("Recent Chats")
         if not sidebar_threads:
             st.caption("*Your saved chats will appear here.*")
-
         for t in sidebar_threads:
             col1, col2 = st.columns([0.85, 0.15], vertical_alignment="center")
             with col1:
@@ -414,129 +424,462 @@ if st.session_state.delete_requested_for:
     confirm_delete_chat_dialog(st.session_state.delete_requested_for)
 
 # ==========================================
-# APP ROUTING: TEACHER DASHBOARD (Expander Mode)
+# APP ROUTING: TEACHER DASHBOARD
 # ==========================================
 if user_role == "teacher":
     st.markdown("<div class='big-title' style='color:#fc8404;'>👨‍🏫 helix.ai / Teacher</div>", unsafe_allow_html=True)
     st.markdown("<div class='subtitle'>Classroom Management & AI Assistant</div>", unsafe_allow_html=True)
-    
-    with st.expander("🛠️ Open Teacher Dashboard", expanded=False):
-        tab1, tab2, tab3 = st.tabs(["⚙️ Class Management", "📊 Student Analytics", "📝 Assign Papers"])
-        
-        # We need the roster for both Tab 1 and Tab 2, so query it here
-        student_docs = db.collection("users").where(filter=firestore.FieldFilter("teacher_id", "==", user_email)).stream()
-        roster = list(student_docs)
-        
-        with tab1:
-            st.subheader("Manage Your Students")
-            st.caption("Manually add students by their Google login email. This links their chat data to your dashboard.")
-            
+
+    AVAILABLE_SUBJECTS = ["Math", "Biology", "Chemistry", "Physics", "English"]
+
+    # Query roster once — used across multiple tabs
+    student_docs_raw = db.collection("users").where(
+        filter=firestore.FieldFilter("teacher_id", "==", user_email)
+    ).stream()
+    roster = list(student_docs_raw)
+
+    # 4 TABS — visible immediately, no expander
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "⚙️ Class Management",
+        "📊 Student Analytics",
+        "📝 Assign Papers",
+        "💬 AI Chat"
+    ])
+
+    # ── TAB 1: CLASS MANAGEMENT ──────────────────────────────────────────
+    with tab1:
+        st.subheader("🏫 Class Management")
+        st.caption("Create unique classes (e.g., 'Class 6A'). Class names are unique across the entire school.")
+
+        with st.form("create_class_form", clear_on_submit=True):
+            col_cname, col_cbtn = st.columns([0.8, 0.2])
+            with col_cname:
+                new_class_name = st.text_input("New Class Name", placeholder="e.g. Class 7B")
+            with col_cbtn:
+                st.write("")
+                submit_class = st.form_submit_button("➕ Create", use_container_width=True)
+            if submit_class and new_class_name:
+                success, message = create_global_class(new_class_name, user_email)
+                if success:
+                    st.success(message)
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.error(message)
+
+        st.divider()
+        st.subheader("Add Students to a Class")
+        my_classes_tab1 = list(db.collection("classes").where(
+            filter=firestore.FieldFilter("created_by", "==", user_email)
+        ).stream())
+
+        if my_classes_tab1:
+            class_names_tab1 = [c.id for c in my_classes_tab1]
+            selected_class_for_add = st.selectbox("Select Class to Add Student:", class_names_tab1, key="add_student_class_sel")
             with st.form("add_student_form", clear_on_submit=True):
                 col_email, col_btn = st.columns([0.8, 0.2])
                 with col_email:
                     new_student_email = st.text_input("Student Email Address")
                 with col_btn:
-                    st.write("") 
+                    st.write("")
                     submit_student = st.form_submit_button("➕ Add", use_container_width=True)
-                
                 if submit_student and new_student_email:
                     clean_email = new_student_email.strip().lower()
                     db.collection("users").document(clean_email).set({
                         "role": "student",
                         "teacher_id": user_email
                     }, merge=True)
-                    st.success(f"Added {clean_email} to your classroom!")
+                    db.collection("classes").document(selected_class_for_add).update({
+                        "students": firestore.ArrayUnion([clean_email])
+                    })
+                    st.success(f"Added {clean_email} to {selected_class_for_add}!")
                     time.sleep(1)
                     st.rerun()
 
-            st.divider()
-            
-            st.subheader("Current Roster")
-            if not roster:
-                st.info("You haven't added any students yet.")
-            else:
-                for student in roster:
-                    s_email = student.id
-                    c1, c2 = st.columns([0.85, 0.15])
-                    with c1:
-                        st.write(f"🎓 **{s_email}**")
-                    with c2:
-                        if st.button("Remove", key=f"rem_{s_email}", use_container_width=True):
-                            db.collection("users").document(s_email).update({"teacher_id": None})
+        st.divider()
+        st.subheader("Your Active Classes")
+        my_classes_list = list(db.collection("classes").where(
+            filter=firestore.FieldFilter("created_by", "==", user_email)
+        ).stream())
+
+        if not my_classes_list:
+            st.info("You haven't created any classes yet.")
+        else:
+            for c in my_classes_list:
+                c_data = c.to_dict()
+                c_name = c.id
+                current_subjects = c_data.get("subjects", [])
+                class_students = c_data.get("students", [])
+
+                with st.expander(f"📁 {c_name}  ·  {len(class_students)} Students  ·  📚 {', '.join(current_subjects) if current_subjects else 'No subjects set'}"):
+                    st.caption(f"Created: {time.strftime('%Y-%m-%d', time.localtime(c_data.get('created_at', 0)))}")
+
+                    st.markdown("**Subjects You Teach in This Class:**")
+                    st.caption("Only analytics from these subjects will appear in Student Insights.")
+                    new_subject_selection = []
+                    sub_cols = st.columns(len(AVAILABLE_SUBJECTS))
+                    for i, subject in enumerate(AVAILABLE_SUBJECTS):
+                        with sub_cols[i]:
+                            checked = st.checkbox(subject, value=(subject in current_subjects), key=f"subj_{c_name}_{subject}")
+                            if checked: new_subject_selection.append(subject)
+
+                    col_save, col_del = st.columns([0.7, 0.3])
+                    with col_save:
+                        if st.button("💾 Save Subjects", key=f"save_subj_{c_name}", use_container_width=True):
+                            db.collection("classes").document(c_name).update({"subjects": new_subject_selection})
+                            st.success("Subjects saved!")
+                            time.sleep(0.8)
+                            st.rerun()
+                    with col_del:
+                        if st.button("🗑️ Delete Class", key=f"del_class_{c_name}", type="primary", use_container_width=True):
+                            db.collection("classes").document(c_name).delete()
                             st.rerun()
 
-        with tab2:
-            st.subheader("Student Insights & Learning Gaps")
-            st.caption("AI automatically tracks your students' questions and evaluates their conceptual weaknesses during chats.")
-            
-            if not roster:
-                st.info("Add students in the Class Management tab to view their analytics.")
+                    st.markdown("**Students in this class:**")
+                    if not class_students:
+                        st.caption("No students added yet.")
+                    else:
+                        for s_email in class_students:
+                            s_doc = db.collection("users").document(s_email).get()
+                            s_name = s_doc.to_dict().get("display_name", s_email.split("@")[0]) if s_doc.exists else s_email.split("@")[0]
+                            rc1, rc2 = st.columns([0.85, 0.15])
+                            with rc1:
+                                st.write(f"🎓 **{s_name}** ({s_email})")
+                            with rc2:
+                                if st.button("Remove", key=f"rem_{c_name}_{s_email}", use_container_width=True):
+                                    db.collection("classes").document(c_name).update({
+                                        "students": firestore.ArrayRemove([s_email])
+                                    })
+                                    db.collection("users").document(s_email).update({"teacher_id": None})
+                                    st.rerun()
+
+    # ── TAB 2: STUDENT ANALYTICS ─────────────────────────────────────────
+    with tab2:
+        st.subheader("📊 Student Insights & Learning Gaps")
+        st.caption("AI automatically tracks your students' questions and evaluates their conceptual weaknesses.")
+
+        if not roster:
+            st.info("Add students in the Class Management tab to view their analytics.")
+        else:
+            student_lookup = {}
+            for s in roster:
+                s_data = s.to_dict()
+                s_name = s_data.get("display_name") or s.id.split("@")[0]
+                s_grade = s_data.get("grade") or "Grade Unknown"
+                student_lookup[s.id] = {"name": s_name, "grade": s_grade}
+
+            search_query = st.text_input("🔍 Search student by name...", placeholder="Type a name to filter")
+
+            all_grades = sorted(set(v["grade"] for v in student_lookup.values()))
+            grade_filter = st.selectbox("Filter by Grade:", ["All Grades"] + all_grades)
+
+            # NEW: Time range filter
+            time_filter = st.radio(
+                "Show interactions from:",
+                ["Last 12 Hours", "Last 24 Hours", "Last 3 Days", "Last 7 Days"],
+                horizontal=True
+            )
+            time_map = {
+                "Last 12 Hours": 12 * 3600,
+                "Last 24 Hours": 24 * 3600,
+                "Last 3 Days": 3 * 86400,
+                "Last 7 Days": 7 * 86400,
+            }
+            cutoff_timestamp = time.time() - time_map[time_filter]
+
+            filtered_students = {
+                email: info for email, info in student_lookup.items()
+                if (search_query.lower() in info["name"].lower() or not search_query)
+                and (grade_filter == "All Grades" or info["grade"] == grade_filter)
+            }
+
+            if not filtered_students:
+                st.warning("No students match your search or filter.")
             else:
-                selected_student = st.selectbox("Select Student:", [s.id for s in roster])
-                
+                student_display_list = [
+                    f"{info['name']} ({info['grade']})" for email, info in filtered_students.items()
+                ]
+                email_list = list(filtered_students.keys())
+
+                selected_index = st.selectbox(
+                    "Select Student:",
+                    options=range(len(student_display_list)),
+                    format_func=lambda i: student_display_list[i]
+                )
+                selected_student = email_list[selected_index]
+                selected_name = filtered_students[selected_student]["name"]
+
                 if selected_student:
-                    # Fetch student's analytics history
-                    analytics_docs = db.collection("users").document(selected_student).collection("analytics").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(20).stream()
-                    
+                    st.markdown(f"### 📋 Report for **{selected_name}**")
+                    st.caption(f"Showing data from: **{time_filter}**")
+
+                    teacher_subjects = []
+                    my_classes_for_filter = db.collection("classes").where(
+                        filter=firestore.FieldFilter("created_by", "==", user_email)
+                    ).stream()
+                    for c in my_classes_for_filter:
+                        if selected_student in c.to_dict().get("students", []):
+                            teacher_subjects = c.to_dict().get("subjects", [])
+                            break
+
+                    analytics_docs = db.collection("users").document(selected_student).collection("analytics").order_by(
+                        "timestamp", direction=firestore.Query.DESCENDING
+                    ).limit(50).stream()
+
                     recent_weaknesses = set()
                     recent_questions = []
                     poor_count = 0
                     good_count = 0
-                    
+                    average_count = 0
+
                     for doc in analytics_docs:
                         data = doc.to_dict()
-                        if data.get("understanding_level") == "Poor": poor_count += 1
-                        elif data.get("understanding_level") == "Good": good_count += 1
-                        
+
+                        # Apply time filter
+                        if data.get("timestamp", 0) < cutoff_timestamp:
+                            continue
+
+                        doc_topic = data.get("topic", "")
+                        topic_lower = doc_topic.lower()
+
+                        if teacher_subjects:
+                            topic_matches = (
+                                ("Math" in teacher_subjects and any(k in topic_lower for k in ["math", "algebra", "geometry", "fraction", "equation"])) or
+                                ("Biology" in teacher_subjects and any(k in topic_lower for k in ["biology", "cell", "organism", "plant", "animal", "genetics"])) or
+                                ("Chemistry" in teacher_subjects and any(k in topic_lower for k in ["chemistry", "element", "compound", "reaction", "acid", "periodic"])) or
+                                ("Physics" in teacher_subjects and any(k in topic_lower for k in ["physics", "force", "gravity", "motion", "energy", "wave", "light"])) or
+                                ("English" in teacher_subjects and any(k in topic_lower for k in ["english", "grammar", "poem", "essay", "writing", "story"]))
+                            )
+                            if not topic_matches:
+                                continue
+
+                        level = data.get("understanding_level", "Unknown")
+                        if level == "Poor": poor_count += 1
+                        elif level == "Average": average_count += 1
+                        elif level == "Good": good_count += 1
+
                         wp = data.get("weak_point")
                         if wp and wp != "None":
-                            recent_weaknesses.add(f"{data.get('topic')}: {wp}")
-                            
+                            recent_weaknesses.add(f"{doc_topic}: {wp}")
+
                         qa = data.get("question_asked")
                         if qa and qa != "None":
                             recent_questions.append(qa)
 
-                    if poor_count == 0 and good_count == 0 and not recent_questions:
-                        st.info(f"{selected_student} hasn't had any academic interactions with Helix yet.")
+                    total_interactions = poor_count + average_count + good_count
+
+                    if total_interactions == 0 and not recent_questions:
+                        st.info(f"{selected_name} has no interactions in the selected time range.")
                     else:
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.metric("Questions Asked", len(recent_questions))
-                        with col2:
-                            total = poor_count + good_count
-                            health = int((good_count / total) * 100) if total > 0 else 100
-                            st.metric("Concept Mastery Score", f"{health}%")
-                            
+                        if total_interactions > 0:
+                            weighted_score = (good_count * 1.0 + average_count * 0.5 + poor_count * 0.0)
+                            health = int((weighted_score / total_interactions) * 100)
+                        else:
+                            health = 0
+
+                        if health >= 80: score_label = f"{health}% 🟢"
+                        elif health >= 50: score_label = f"{health}% 🟡"
+                        else: score_label = f"{health}% 🔴"
+
+                        col1, col2, col3 = st.columns(3)
+                        with col1: st.metric("Questions Asked", len(recent_questions))
+                        with col2: st.metric("Concept Mastery", score_label)
+                        with col3: st.metric("Breakdown", f"✅{good_count} 🟡{average_count} ❌{poor_count}")
+
                         st.divider()
-                        col3, col4 = st.columns(2)
-                        with col3:
+                        col4, col5 = st.columns(2)
+                        with col4:
                             st.markdown("🚨 **Identified Weak Points**")
                             if recent_weaknesses:
-                                for w in list(recent_weaknesses)[:5]:
-                                    st.error(w)
+                                for w in list(recent_weaknesses)[:5]: st.error(w)
                             else:
-                                st.success("No major weak points identified yet!")
-                                
-                        with col4:
+                                st.success("No major weak points identified!")
+                        with col5:
                             st.markdown("💬 **Recently Asked Questions**")
                             if recent_questions:
-                                for q in recent_questions[:5]:
-                                    st.info(q)
+                                for q in recent_questions[:5]: st.info(q)
                             else:
                                 st.write("No direct questions asked recently.")
-            
-        with tab3:
-            st.subheader("Assignment Creator")
-            st.info("Coming Soon: Generate AI practice papers and push them directly to your students' chat interfaces.")
-            
+
+    # ── TAB 3: ASSIGN PAPERS ─────────────────────────────────────────────
+    with tab3:
+        st.subheader("📝 Assignment Creator")
+        st.caption("Generate a question paper with Helix AI, preview it, and push it to a class or individual student.")
+
+        st.markdown("#### Step 1: Configure Paper")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            assign_title = st.text_input("Assignment Title", placeholder="e.g. Chapter 4 Science Quiz")
+            assign_subject = st.selectbox("Subject", ["Math", "Biology", "Chemistry", "Physics", "English"])
+            assign_stage = st.selectbox("Stage", ["Stage 7", "Stage 8", "Stage 9"])
+        with col_b:
+            assign_difficulty = st.selectbox("Difficulty", ["Easy", "Medium", "Hard", "Mixed"])
+            assign_marks = st.number_input("Total Marks", min_value=10, max_value=100, value=30, step=5)
+            assign_due = st.date_input("Due Date")
+
+        assign_extra = st.text_area(
+            "Additional Instructions (optional)",
+            placeholder="e.g. Focus on Chapter 4: Forces and Motion. Include 2 diagram questions.",
+            height=80
+        )
+
+        st.markdown("#### Step 2: Generate Paper")
+
+        # We need the Gemini client here — initialize early placeholder
+        _api_key = os.environ.get("GOOGLE_API_KEY") or st.secrets.get("GOOGLE_API_KEY", "")
+        _client_ready = False
+        try:
+            _gen_client = genai.Client(api_key=_api_key)
+            _client_ready = True
+        except Exception:
+            pass
+
+        if st.button("🤖 Generate with Helix AI", use_container_width=True, type="primary"):
+            if not _client_ready:
+                st.error("Gemini API key not configured.")
+            else:
+                with st.spinner("Helix is writing your question paper..."):
+                    try:
+                        gen_prompt = (
+                            f"Generate a formal CIE {assign_subject} question paper for {assign_stage} students. "
+                            f"Difficulty: {assign_difficulty}. Total marks: {assign_marks}. "
+                            f"Include a proper header, numbered questions with marks in brackets, and a mark scheme at the end. "
+                            f"Additional instructions: {assign_extra if assign_extra else 'None'}. "
+                            f"Follow all formatting rules strictly. Append [PDF_READY] at the end."
+                        )
+                        gen_response = _gen_client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=[gen_prompt],
+                            config=types.GenerateContentConfig(temperature=0.3),
+                        )
+                        generated_paper = safe_response_text(gen_response).strip()
+                        generated_paper = re.sub(r"\[ANALYTICS:.*?\]", "", generated_paper, flags=re.DOTALL).strip()
+                        st.session_state["draft_paper"] = generated_paper
+                        st.session_state["draft_title"] = assign_title or f"{assign_subject} {assign_stage} Paper"
+                        st.session_state["draft_due"] = str(assign_due)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Generation failed: {e}")
+
+        if st.session_state.get("draft_paper"):
+            st.markdown("#### Step 3: Preview & Push to Students")
+            with st.expander("👁️ Preview Paper", expanded=True):
+                preview_text = st.session_state["draft_paper"].replace("[PDF_READY]", "").strip()
+                st.markdown(preview_text)
+
+            try:
+                # Need create_pdf defined below — forward reference handled by define order
+                from io import BytesIO as _BytesIO
+                pdf_buf = create_pdf(st.session_state["draft_paper"])
+                st.download_button(
+                    label="📥 Download Paper as PDF",
+                    data=pdf_buf,
+                    file_name=f"{st.session_state['draft_title']}.pdf",
+                    mime="application/pdf",
+                    key="teacher_pdf_download"
+                )
+            except Exception: pass
+
+            st.divider()
+            st.markdown("#### Step 4: Push Assignment")
+            push_mode = st.radio("Push to:", ["Entire Class", "Individual Student"], horizontal=True)
+
+            if push_mode == "Entire Class":
+                my_classes_push_raw = db.collection("classes").where(
+                    filter=firestore.FieldFilter("created_by", "==", user_email)
+                ).stream()
+                class_options = {c.id: c.to_dict().get("students", []) for c in my_classes_push_raw}
+
+                if not class_options:
+                    st.warning("You haven't created any classes yet.")
+                else:
+                    target_class = st.selectbox("Select Class:", list(class_options.keys()))
+                    student_count = len(class_options.get(target_class, []))
+                    st.caption(f"This will push the assignment to **{student_count} students**.")
+                    if st.button(f"🚀 Push to {target_class}", use_container_width=True, type="primary"):
+                        success_count = 0
+                        for s_email in class_options[target_class]:
+                            try:
+                                db.collection("users").document(s_email).collection("assignments").add({
+                                    "title": st.session_state["draft_title"],
+                                    "content": st.session_state["draft_paper"],
+                                    "assigned_by": user_email,
+                                    "assigned_at": time.time(),
+                                    "due_date": st.session_state["draft_due"],
+                                    "status": "pending",
+                                    "class": target_class
+                                })
+                                success_count += 1
+                            except Exception: pass
+                        st.success(f"✅ Pushed to {success_count}/{len(class_options[target_class])} students in {target_class}!")
+                        del st.session_state["draft_paper"]
+                        time.sleep(1)
+                        st.rerun()
+            else:
+                if not roster:
+                    st.warning("No students in your roster yet.")
+                else:
+                    individual_lookup = {}
+                    for s in roster:
+                        s_data = s.to_dict()
+                        s_name = s_data.get("display_name") or s.id.split("@")[0]
+                        individual_lookup[s.id] = s_name
+                    target_email = st.selectbox(
+                        "Select Student:",
+                        options=list(individual_lookup.keys()),
+                        format_func=lambda e: individual_lookup[e]
+                    )
+                    if st.button(f"🚀 Push to {individual_lookup[target_email]}", use_container_width=True, type="primary"):
+                        try:
+                            db.collection("users").document(target_email).collection("assignments").add({
+                                "title": st.session_state["draft_title"],
+                                "content": st.session_state["draft_paper"],
+                                "assigned_by": user_email,
+                                "assigned_at": time.time(),
+                                "due_date": st.session_state["draft_due"],
+                                "status": "pending",
+                                "class": "Individual"
+                            })
+                            st.success(f"✅ Pushed to {individual_lookup[target_email]}!")
+                            del st.session_state["draft_paper"]
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed: {e}")
+
+            if st.button("🗑️ Discard Draft", use_container_width=True):
+                del st.session_state["draft_paper"]
+                st.rerun()
+
+    # ── TAB 4: AI CHAT (falls through below) ─────────────────────────────
+    with tab4:
+        st.markdown("Use the AI chat below ⬇️ to generate lesson plans, test ideas, or ask curriculum questions.")
+
     st.divider()
+
 else:
-    # If student or guest, just show the standard headers
     st.markdown("<div class='big-title'>📚 helix.ai</div>", unsafe_allow_html=True)
     st.markdown("<div class='subtitle'>Your CIE Tutor for Grade 6-8!</div>", unsafe_allow_html=True)
 
+    # Grade selector for students
+    if is_authenticated and user_role == "student":
+        current_grade = user_profile.get("grade", None)
+        GRADE_OPTIONS = ["Grade 6", "Grade 7", "Grade 8", "Grade 9"]
+        with st.expander("🎓 Set Your Grade", expanded=(current_grade is None)):
+            selected_grade = st.selectbox(
+                "Which grade are you in?",
+                options=["Select..."] + GRADE_OPTIONS,
+                index=0 if not current_grade else (GRADE_OPTIONS.index(current_grade) + 1 if current_grade in GRADE_OPTIONS else 0)
+            )
+            if st.button("Save Grade"):
+                if selected_grade != "Select...":
+                    db.collection("users").document(user_email).update({"grade": selected_grade})
+                    st.success(f"Grade set to {selected_grade}!")
+                    time.sleep(0.8)
+                    st.rerun()
+
 # ==========================================
-# UNIVERSAL CHAT VIEW (Runs for Everyone)
+# UNIVERSAL CHAT VIEW
 # ==========================================
 
 # -----------------------------
@@ -557,7 +900,7 @@ except Exception as e:
     st.stop()
 
 # -----------------------------
-# 6) HELPERS & LATEX CLEANER
+# 6) HELPERS
 # -----------------------------
 def get_friendly_name(filename: str) -> str:
     if not filename: return "Cambridge Textbook"
@@ -586,7 +929,7 @@ def md_inline_to_rl(text: str) -> str:
     return s
 
 # -----------------------------
-# 7) VISUAL GENERATORS (Gemini Image Cascade with 2K Res)
+# 7) VISUAL GENERATORS
 # -----------------------------
 def generate_single_image(desc: str):
     clean_desc = re.sub(r"\s+", " ", (desc or "")).strip()
@@ -618,12 +961,11 @@ def generate_pie_chart(data_str: str):
                 labels.append(k.strip())
                 sizes.append(float(re.sub(r"[^\d\.]", "", v)))
         if not labels or not sizes or len(labels) != len(sizes): return None
-
         fig = Figure(figsize=(5, 5), dpi=200)
         FigureCanvas(fig)
         ax = fig.add_subplot(111)
         theme_colors = ["#00d4ff", "#fc8404", "#2ecc71", "#9b59b6", "#f1c40f", "#e74c3c"]
-        ax.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=140, colors=theme_colors[: len(labels)], textprops={"color": "black", "fontsize": 9})
+        ax.pie(sizes, labels=labels, autopct="%1.1f%%", startangle=140, colors=theme_colors[:len(labels)], textprops={"color": "black", "fontsize": 9})
         ax.axis("equal")
         buf = BytesIO()
         fig.savefig(buf, format="png", bbox_inches="tight", transparent=True)
@@ -644,8 +986,8 @@ def process_visual(prompt_data):
 def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
     buffer = BytesIO()
     doc = SimpleDocTemplate(
-        buffer, pagesize=A4, rightMargin=0.75 * inch, leftMargin=0.75 * inch,
-        topMargin=0.75 * inch, bottomMargin=0.75 * inch
+        buffer, pagesize=A4, rightMargin=0.75*inch, leftMargin=0.75*inch,
+        topMargin=0.75*inch, bottomMargin=0.75*inch
     )
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle("CustomTitle", parent=styles["Heading1"], fontSize=18, textColor=colors.HexColor("#00d4ff"), spaceAfter=12, alignment=TA_CENTER, fontName="Helvetica-Bold")
@@ -695,13 +1037,12 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
             ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8f9fa")), ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
         ]))
         story.append(t)
-        story.append(Spacer(1, 0.18 * inch))
+        story.append(Spacer(1, 0.18*inch))
         table_rows = []
 
     for raw in cleaned_lines:
         line = raw.rstrip("\n")
         s = line.strip()
-
         if s.startswith("|") and s.endswith("|") and s.count("|") >= 2:
             cells = [c.strip() for c in s.split("|")[1:-1]]
             if all(re.fullmatch(r":?-+:?", c) for c in cells if c): continue
@@ -709,11 +1050,9 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
             continue
         else:
             render_pending_table()
-
         if not s:
-            story.append(Spacer(1, 0.14 * inch))
+            story.append(Spacer(1, 0.14*inch))
             continue
-
         if s.startswith("IMAGE_GEN:") or s.startswith("PIE_CHART:"):
             if images and img_idx < len(images) and images[img_idx]:
                 try:
@@ -721,25 +1060,23 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
                     rl_reader = ImageReader(img_stream)
                     iw, ih = rl_reader.getSize()
                     aspect = ih / float(iw)
-                    story.append(Spacer(1, 0.12 * inch))
-                    story.append(RLImage(img_stream, width=4.6 * inch, height=4.6 * inch * aspect))
-                    story.append(Spacer(1, 0.12 * inch))
+                    story.append(Spacer(1, 0.12*inch))
+                    story.append(RLImage(img_stream, width=4.6*inch, height=4.6*inch*aspect))
+                    story.append(Spacer(1, 0.12*inch))
                 except Exception: pass
             img_idx += 1
             continue
-
         if "mark scheme" in s.lower() and s.startswith("#"):
             story.append(PageBreak())
             story.append(Paragraph(md_inline_to_rl(re.sub(r"^#+\s*", "", s)), title_style))
             continue
-
         if s.startswith("# "): story.append(Paragraph(md_inline_to_rl(s[2:].strip()), title_style))
         elif s.startswith("## "): story.append(Paragraph(md_inline_to_rl(s[3:].strip()), heading_style))
         elif s.startswith("### "): story.append(Paragraph(f"<b>{md_inline_to_rl(s[4:].strip())}</b>", body_style))
         else: story.append(Paragraph(md_inline_to_rl(line), body_style))
 
     render_pending_table()
-    story.append(Spacer(1, 0.28 * inch))
+    story.append(Spacer(1, 0.28*inch))
     story.append(Paragraph("<i>Generated by helix.ai - Your CIE Tutor</i>", body_style))
     doc.build(story)
     buffer.seek(0)
@@ -774,15 +1111,14 @@ You are Helix, a friendly CIE Science/Math/English Tutor for Stage 7-9 students.
 ### RULE 5: VISUAL SYNTAX (STRICT)
 - For diagrams:
   IMAGE_GEN: [Detailed description of the image, educational, white background]
-- For pie charts (no AI):
+- For pie charts:
   PIE_CHART: [Label1:Value1, Label2:Value2]
-  Example: PIE_CHART: [Nitrogen:78, Oxygen:21, Argon:1]
 
 ### RULE 6: MARK SCHEME
 - Put "## Mark Scheme" at the very bottom. No citations inside mark scheme.
 
 ### RULE 7: STUDENT ANALYTICS (HIDDEN)
-If the user asks a question about a concept or attempts to answer a question, you must evaluate their understanding. 
+If the user asks a question about a concept or attempts to answer a question, evaluate their understanding.
 At the VERY END of your response, output a hidden JSON block exactly like this:
 [ANALYTICS: {"topic": "Topic Name", "understanding_level": "Good/Average/Poor", "weak_point": "Specific gap, or None", "question_asked": "The user's question, or None"}]
 Never mention this analytics block in your natural language response.
@@ -807,7 +1143,7 @@ def upload_textbooks():
     with msg_placeholder.chat_message("assistant"):
         st.markdown("""
         <div class="thinking-container">
-            <span class="thinking-text"> 📚 Scanning Books...</span>
+            <span class="thinking-text">📚 Scanning Books...</span>
             <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
         </div>
         """, unsafe_allow_html=True)
@@ -824,10 +1160,8 @@ def upload_textbooks():
                 elif "math" in t: active_files["math"].append(server_file)
                 elif "eng" in t: active_files["eng"].append(server_file)
                 continue
-
         found_path = pdf_map.get(t)
         if not found_path: continue
-
         try:
             uploaded = client.files.upload(
                 file=str(found_path),
@@ -838,7 +1172,6 @@ def upload_textbooks():
                 if time.time() - start > 180: break
                 time.sleep(3)
                 uploaded = client.files.get(name=uploaded.name)
-
             if uploaded.state.name == "ACTIVE":
                 if "sci" in t: active_files["sci"].append(uploaded)
                 elif "math" in t: active_files["math"].append(uploaded)
@@ -854,20 +1187,15 @@ def upload_textbooks():
 def select_relevant_books(query, file_dict):
     qn = normalize_stage_text(query)
     selected = []
-
     is_math = any(k in qn for k in ["math", "algebra", "geometry", "calculate", "equation", "number", "fraction"])
     is_sci = any(k in qn for k in ["science", "cell", "biology", "physics", "chemistry", "experiment", "gravity"])
     is_eng = any(k in qn for k in ["english", "poem", "story", "essay", "writing", "grammar", "noun", "verb"])
-
-    stage_7 = bool(re.search(r"\bstage\W*7\b", qn) or re.search(r"\bgrade\W*6\b", qn) or re.search(r"\byear\W*7\b", qn))
-    stage_8 = bool(re.search(r"\bstage\W*8\b", qn) or re.search(r"\bgrade\W*7\b", qn) or re.search(r"\byear\W*8\b", qn))
-    stage_9 = bool(re.search(r"\bstage\W*9\b", qn) or re.search(r"\bgrade\W*8\b", qn) or re.search(r"\byear\W*9\b", qn))
-
+    stage_7 = bool(re.search(r"\bstage\W*7\b", qn) or re.search(r"\bgrade\W*6\b", qn))
+    stage_8 = bool(re.search(r"\bstage\W*8\b", qn) or re.search(r"\bgrade\W*7\b", qn))
+    stage_9 = bool(re.search(r"\bstage\W*9\b", qn) or re.search(r"\bgrade\W*8\b", qn))
     has_subject = is_math or is_sci or is_eng
     has_stage = stage_7 or stage_8 or stage_9
-
     if not has_subject and not has_stage: return []
-
     if has_stage and not has_subject: is_math = is_sci = is_eng = True
     if has_subject and not has_stage: stage_8 = True
 
@@ -890,12 +1218,43 @@ def select_relevant_books(query, file_dict):
 if "textbook_handles" not in st.session_state:
     st.session_state.textbook_handles = upload_textbooks()
 
+# ASSIGNMENT BANNER (for logged-in students)
+if is_authenticated and user_role == "student" and db is not None:
+    pending_assignments = db.collection("users").document(auth_object.email).collection("assignments").where(
+        filter=firestore.FieldFilter("status", "==", "pending")
+    ).stream()
+    pending_list = list(pending_assignments)
+    if pending_list:
+        st.markdown("---")
+        st.markdown("### 📋 Pending Assignments")
+        for assignment in pending_list:
+            a_data = assignment.to_dict()
+            a_id = assignment.id
+            with st.container(border=True):
+                col_a, col_b = st.columns([0.85, 0.15])
+                with col_a:
+                    st.markdown(f"📝 **{a_data.get('title', 'Assignment')}**")
+                    st.caption(f"From: {a_data.get('assigned_by', 'Your Teacher')}  ·  Due: {a_data.get('due_date', 'No due date')}")
+                with col_b:
+                    if st.button("Open", key=f"open_assign_{a_id}", type="primary"):
+                        assign_msg = {
+                            "role": "assistant",
+                            "content": a_data.get("content", ""),
+                            "is_downloadable": True,
+                            "images": [],
+                            "is_assignment": True,
+                        }
+                        st.session_state.messages.append(assign_msg)
+                        db.collection("users").document(auth_object.email).collection("assignments").document(a_id).update({"status": "opened"})
+                        save_chat_history()
+                        st.rerun()
+        st.markdown("---")
+
 for idx, message in enumerate(st.session_state.messages):
     with st.chat_message(message["role"]):
         display_content = (message.get("content") or "").replace("[PDF_READY]", "").strip()
         st.markdown(display_content)
 
-        # RENDER IMAGES WITH CAPTION
         if message.get("images"):
             for img_bytes in message["images"]:
                 if img_bytes:
@@ -911,12 +1270,9 @@ for idx, message in enumerate(st.session_state.messages):
         if message.get("user_attachment_bytes"):
             mime = message.get("user_attachment_mime", "")
             name = message.get("user_attachment_name", "File")
-            if "image" in mime:
-                st.image(message["user_attachment_bytes"], width=320)
-            elif "pdf" in mime:
-                st.caption(f"📄 *Attached PDF Document: {name}*")
-            elif "text" in mime or name.endswith(".txt"):
-                st.caption(f"📝 *Attached Text Document: {name}*")
+            if "image" in mime: st.image(message["user_attachment_bytes"], width=320)
+            elif "pdf" in mime: st.caption(f"📄 *Attached PDF Document: {name}*")
+            elif "text" in mime or name.endswith(".txt"): st.caption(f"📝 *Attached Text Document: {name}*")
 
         if message["role"] == "assistant" and message.get("is_downloadable"):
             try:
@@ -968,17 +1324,16 @@ if chat_input_data:
         thinking_placeholder = st.empty()
         try:
             has_attachment = file_bytes is not None
-            if has_attachment:
-                relevant_books = select_relevant_books(prompt + " science stage 8", st.session_state.textbook_handles)
-            else:
-                relevant_books = select_relevant_books(prompt, st.session_state.textbook_handles)
+            relevant_books = select_relevant_books(
+                prompt + " science stage 8" if has_attachment else prompt,
+                st.session_state.textbook_handles
+            )
 
             if relevant_books:
                 book_names = [get_friendly_name(b.display_name) for b in relevant_books]
                 st.caption(f"🔍 *Scanning Curriculum: {', '.join(book_names)}*")
             else:
-                if has_attachment: st.caption("🔍 *Analyzing attached file...*")
-                else: st.caption("⚡ *Quick reply (General Knowledge)*")
+                st.caption("🔍 *Analyzing attached file...*" if has_attachment else "⚡ *Quick reply (General Knowledge)*")
 
             thinking_placeholder.markdown("""
                 <div class="thinking-container">
@@ -1037,16 +1392,12 @@ if chat_input_data:
             if not bot_text.strip():
                 bot_text = "⚠️ *Helix couldn't generate a text response this time.* Try rephrasing your question."
 
-            # --- NEW: EXTRACT HIDDEN ANALYTICS ---
+            # EXTRACT HIDDEN ANALYTICS
             analytics_match = re.search(r"\[ANALYTICS:\s*({.*?})\s*\]", bot_text, flags=re.IGNORECASE | re.DOTALL)
             if analytics_match:
                 try:
-                    analytics_str = analytics_match.group(1)
-                    analytics_data = json.loads(analytics_str)
-                    
-                    # Remove the hidden block from the visible chat
+                    analytics_data = json.loads(analytics_match.group(1))
                     bot_text = bot_text[:analytics_match.start()].strip()
-                    
                     if is_authenticated and db is not None:
                         db.collection("users").document(auth_object.email).collection("analytics").add({
                             "timestamp": time.time(),
@@ -1071,16 +1422,13 @@ if chat_input_data:
                         <div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div>
                     </div>
                 """, unsafe_allow_html=True)
-                
                 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                     generated_images = list(executor.map(process_visual, visual_prompts))
                 img_thinking.empty()
-
-                for i, img in enumerate(generated_images):
+                for img in generated_images:
                     if img is None:
-                        bot_text += f"\n\n⚠️ *Helix tried to draw a diagram here, but the image generator is currently overloaded (High Demand). Please try again later.*"
+                        bot_text += "\n\n⚠️ *Helix tried to draw a diagram here, but the image generator is currently overloaded. Please try again later.*"
 
-            # PDF button detection
             is_downloadable = (
                 "[PDF_READY]" in bot_text or
                 ("## Mark Scheme" in bot_text and re.search(r"\[\d+\]", bot_text) is not None)
@@ -1092,20 +1440,15 @@ if chat_input_data:
                 "is_downloadable": is_downloadable,
                 "images": generated_images,
             }
-
             st.session_state.messages.append(bot_msg)
 
-            # --- AUTO-TITLE LOGIC ---
             if is_authenticated:
                 user_msg_count = sum(1 for m in st.session_state.messages if m.get("role") == "user")
                 if user_msg_count == 1:
                     coll_ref = get_threads_collection()
                     if coll_ref and st.session_state.current_thread_id:
                         thread_doc = coll_ref.document(st.session_state.current_thread_id).get()
-                        user_edited = False
-                        if thread_doc.exists:
-                            user_edited = thread_doc.to_dict().get("user_edited_title", False)
-
+                        user_edited = thread_doc.to_dict().get("user_edited_title", False) if thread_doc.exists else False
                         if not user_edited:
                             new_title = generate_chat_title(client, st.session_state.messages)
                             if new_title and new_title != "New Chat":
