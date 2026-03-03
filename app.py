@@ -466,7 +466,7 @@ with st.sidebar:
 
         st.divider()
 
-                if user_role == "student":
+        if user_role == "student":
             assigned_teacher = user_profile.get("teacher_id", None)
             if not assigned_teacher:
                 with st.expander("🎓 Are you a Teacher?"):
