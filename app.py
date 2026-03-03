@@ -466,9 +466,9 @@ with st.sidebar:
 
         st.divider()
 
-        if user_role == "student":
-            assigned_teacher = user_profile.get("teacher_id", None)
-            if not assigned_teacher:
+    if user_role == "student":
+        assigned_teacher = user_profile.get("teacher_id", None)
+        if not assigned_teacher:
                 with st.expander("🎓 Are you a Teacher?"):
                     st.caption("Enter your school's verification code to unlock the Teacher Dashboard.")
                     code_input = st.text_input("Teacher Code", type="password")
@@ -494,6 +494,7 @@ with st.sidebar:
                         break
                         
                 st.info(f"🏫 Connected to class:\n**{student_class_name}**")
+
 
 
     sidebar_threads = get_all_threads() if is_authenticated else []
