@@ -4,8 +4,10 @@ import time
 import re
 import uuid
 import concurrent.futures
+import base64
 from pathlib import Path
 from io import BytesIO
+from PIL import Image
 
 from google import genai
 from google.genai import types
@@ -118,6 +120,30 @@ def load_chat_history(thread_id):
             pass
     return get_default_greeting()
 
+def compress_image_for_db(image_bytes: bytes) -> str:
+    """Compress high-res image bytes into a lightweight base64 string for Firestore 1MB limits."""
+    try:
+        if not image_bytes:
+            return None
+        img = Image.open(BytesIO(image_bytes))
+        
+        # Convert to RGB to ensure JPEG compatibility
+        if img.mode != 'RGB':
+            img = img.convert('RGB')
+            
+        # Downscale 2K to 720p maximum for chat history viewing
+        max_size = (1280, 720)
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        
+        # Compress into a small JPEG buffer
+        buf = BytesIO()
+        img.save(buf, format="JPEG", quality=60, optimize=True)
+        
+        return base64.b64encode(buf.getvalue()).decode('utf-8')
+    except Exception as e:
+        print(f"Image compression error: {e}")
+        return None
+
 def save_chat_history():
     coll_ref = get_threads_collection()
     if not coll_ref:
@@ -126,7 +152,6 @@ def save_chat_history():
     current_id = st.session_state.current_thread_id
     safe_messages = []
 
-    # Metadata Trackers
     detected_subjects = set()
     detected_grades = set()
 
@@ -149,11 +174,25 @@ def save_chat_history():
             if any(k in q for k in ["stage 9", "grade 8", "year 9"]):
                 detected_grades.add("Stage 9")
 
+        # Compress generated images to keep Firebase doc under 1MB
+        db_images = []
+        if msg.get("images"):
+            for img_bytes in msg["images"]:
+                if img_bytes:
+                    compressed_b64 = compress_image_for_db(img_bytes)
+                    if compressed_b64:
+                        db_images.append(compressed_b64)
+                        
+        # Also copy over existing db_images if we are just re-saving an old loaded chat
+        elif msg.get("db_images"):
+            db_images = msg["db_images"]
+
         safe_messages.append({
             "role": str(role),
             "content": content_str,
             "is_greeting": bool(msg.get("is_greeting", False)),
             "is_downloadable": bool(msg.get("is_downloadable", False)),
+            "db_images": db_images
         })
 
     data = {
@@ -414,39 +453,40 @@ def md_inline_to_rl(text: str) -> str:
     return s
 
 # -----------------------------
-# 7) VISUAL GENERATORS (Gemini Native Image Cascade)
+# 7) VISUAL GENERATORS (Gemini Image Cascade with 2K Res)
 # -----------------------------
 def generate_single_image(desc: str):
     clean_desc = re.sub(r"\s+", " ", (desc or "")).strip()
     
-    # We will try the models in descending order of quality/capability
     models_to_try = [
-        "gemini-3-pro-image-preview",    # Highest quality, slow, often overloaded
-        "gemini-3.1-flash-image-preview", # High efficiency, fast
-        "gemini-2.5-flash-image"          # Fallback, highest availability
+        "gemini-3-pro-image-preview",
+        "gemini-3.1-flash-image-preview", 
+        "gemini-2.5-flash-image"
     ]
     
     for model_name in models_to_try:
         try:
-            print(f"Trying to generate image with {model_name}...")
             img_resp = client.models.generate_content(
                 model=model_name,
                 contents=[clean_desc],
-                config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
+                config=types.GenerateContentConfig(
+                    response_modalities=["TEXT", "IMAGE"],
+                    image_config=types.ImageConfig(
+                        aspect_ratio="16:9",
+                        image_size="2K" 
+                    )
+                ),
             )
             
-            # Extract the raw bytes from the response parts
             for part in (img_resp.parts or []):
                 if getattr(part, "inline_data", None):
                     return part.inline_data.data
                     
         except Exception as e:
             print(f"{model_name} failed: {e}")
-            continue # Try the next model in the list
+            continue
             
-    # If all three models fail, return None so the chat shows the warning
     return None
-
 
 def generate_pie_chart(data_str: str):
     try:
@@ -780,10 +820,19 @@ for idx, message in enumerate(st.session_state.messages):
         display_content = (message.get("content") or "").replace("[PDF_READY]", "").strip()
         st.markdown(display_content)
 
+        # RENDER IMAGES (Live vs Firebase History)
         if message.get("images"):
             for img_bytes in message["images"]:
                 if img_bytes:
-                    st.image(img_bytes, width=420)
+                    st.image(img_bytes, use_container_width=True, output_format="PNG")
+        elif message.get("db_images"):
+            for b64_str in message["db_images"]:
+                if b64_str:
+                    try:
+                        img_bytes = base64.b64decode(b64_str)
+                        st.image(img_bytes, use_container_width=True, output_format="JPEG")
+                    except Exception:
+                        pass
 
         if message.get("user_attachment_bytes"):
             mime = message.get("user_attachment_mime", "")
