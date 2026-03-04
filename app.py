@@ -1435,11 +1435,33 @@ The books are labeled as Stage 7, but Stage 7 correlates to grade 6. Stage 8 cor
                 elif "pdf" in mime: st.caption(f"📄 *Attached PDF Document: {name}*")
                 elif "text" in mime or name.endswith(".txt"): st.caption(f"📝 *Attached Text Document: {name}*")
 
-            if message["role"] == "assistant" and message.get("is_downloadable"):
-                try:
-                    pdf_buffer = create_pdf(message.get("content") or "", images=message.get("images", []))
-                    st.download_button(label="📥 Download Question Paper as PDF", data=pdf_buffer, file_name=f"Helix_Question_Paper_{idx}.pdf", mime="application/pdf", key=f"download_{st.session_state.current_thread_id}_{idx}")
-                except Exception: pass
+                if message["role"] == "assistant" and message.get("isdownloadable"):
+                    try:
+                        imgs = message.get("images") or []
+                        
+                        if not imgs and message.get("dbimages"):
+                            imgs = []
+                            for b64str in message.get("dbimages", []):
+                                if b64str:
+                                    try:
+                                        imgs.append(base64.b64decode(b64str))
+                                    except Exception:
+                                        pass
+                        
+                        pdf_buffer = create_pdf(
+                            message.get("content") or "",
+                            images=imgs if imgs else None
+                        )
+                        st.download_button(
+                            label="📄 Download Question Paper as PDF",
+                            data=pdf_buffer,
+                            file_name=f"HelixQuestionPaper{idx}.pdf",
+                            mime="application/pdf",
+                            key=f"download_{st.session_state.current_thread_id}_{idx}"
+                        )
+                    except Exception:
+                        pass
+
 
     chat_input_data = st.chat_input("Ask Helix... (Click the paperclip to upload a file!)", accept_file=True, file_type=["jpg", "jpeg", "png", "webp", "avif", "svg", "pdf", "txt"])
 
