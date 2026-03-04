@@ -958,32 +958,33 @@ if user_role == "teacher":
                 recent_q = []
                 total_score = 0
                 score_count = 0
-                
-                # New Dictionary to track Chapter Mastery
+
                 chapter_stats = {}
 
                 for doc in analytics_docs:
                     data = doc.to_dict()
-                    if data.get("timestamp", 0) < cutoff:
-                        continue
-                        
+                    
                     doc_subject = data.get("subject", "General")
-                    if tsubjs and doc_subject not in tsubjs:
+                
+                    if tsubjs:
+                        if not any(doc_subject.lower() in t.lower() or t.lower() in doc_subject.lower() for t in tsubjs):
+                            continue
+                        
+                    raw_score = data.get("score")
+                    try:
+                        score = int(raw_score)
+                    except (ValueError, TypeError):
                         continue
                         
-                    score = data.get("score")
                     ch_num = data.get("chapter_number", 0)
                     ch_name = data.get("chapter_name", "General Concepts")
                     
-                    if score is None:
-                        continue 
+                    total_score += score
+                    score_count += 1
 
-                    
-                    if isinstance(score, (int, float)):
                         total_score += score
                         score_count += 1
-                        
-                        # Accumulate scores per chapter
+         
                         ch_key = f"{doc_subject} | Ch {ch_num}: {ch_name}" if ch_num > 0 else f"{doc_subject} | {ch_name}"
                         if ch_key not in chapter_stats:
                             chapter_stats[ch_key] = {"total": 0, "count": 0}
