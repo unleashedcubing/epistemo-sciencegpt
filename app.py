@@ -1122,20 +1122,35 @@ if user_role == "teacher":
                     )
                     
                     gen_paper = safe_response_text(gen_resp).strip()
-                    st.session_state["draft_paper"] = gen_paper
-                    st.session_state["draft_title"] = assign_title or f"{assign_subject} {assign_grade} Paper"
-                    st.session_state["draft_due"] = str(assign_due)
+                    draft_visual_prompts = re.findall(r'\[(IMAGEGEN|PIECHART):\s*(.*?)\]', gen_paper)
+                    draft_images = []
+                    if draft_visual_prompts:
+                        with st.spinner("Drawing diagrams for the paper..."):
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                                draft_images = list(executor.map(process_visual_wrapper, draft_visual_prompts))
+                    
+                    st.session_state.draft_paper = gen_paper
+                    st.session_state.draft_images = draft_images  # Save images to state
+                    st.session_state.draft_title = assign_title or f"{assign_subject} {assign_grade} Paper"
+                    st.session_state.draft_due = str(assign_due)
                     st.rerun()
-                except Exception as e: st.error(f"Generation failed: {e}")
+                except Exception as e:
+                    st.error(f"Generation failed: {e}")
 
         if st.session_state.get("draft_paper"):
-            with st.expander("👁️ Preview Paper", expanded=True):
-                st.markdown(st.session_state["draft_paper"].replace("[PDF_READY]", "").strip())
-            
-            try:
-                pdf_buf = create_pdf(st.session_state["draft_paper"])
-                st.download_button(label="📥 Download Paper as PDF", data=pdf_buf, file_name=f"{st.session_state['draft_title']}.pdf", mime="application/pdf")
-            except Exception: pass
+            with st.expander("📝 Preview Paper", expanded=True):
+                st.markdown(st.session_state.draft_paper.replace("[PDFREADY]", "").strip())
+                try:
+                    draft_imgs = st.session_state.get("draft_images", [])
+                    pdf_buf = create_pdf(st.session_state.draft_paper, images=draft_imgs)
+                    st.download_button(
+                        label="📄 Download Paper as PDF",
+                        data=pdf_buf,
+                        file_name=f"{st.session_state.draft_title}.pdf",
+                        mime="application/pdf"
+                    )
+                except Exception:
+                    pass
 
             st.divider()
             push_mode = st.radio("Push to:", ["Entire Class", "Individual Student"], horizontal=True)
