@@ -906,155 +906,139 @@ if user_role == "teacher":
     elif teacher_menu == "Student Analytics":
         st.subheader("📊 Student Insights & Learning Gaps")
         
-        student_docs_raw = db.collection("users").where(filter=firestore.FieldFilter("teacher_id", "==", user_email)).stream()
-        roster = list(student_docs_raw)
-        
-        if len(roster) == 0:
-            st.warning("⚠️ No students found. Please go to **Class Management** and add students to a class first.")
-        else:
+        try:
+            student_docs_raw = db.collection("users").where(filter=firestore.FieldFilter("teacher_id", "==", user_email)).stream()
+            roster = list(student_docs_raw)
             
-            student_lookup = {}
-            for s in roster:
-                d = s.to_dict()
-                student_lookup[s.id] = {
-                    "name": d.get("display_name") or s.id.split("@")[0],
-                    "grade": d.get("grade") or "Grade 6"
+            if not roster:
+                st.warning("⚠️ No students found. Please go to **Class Management** and add students to a class first.")
+            else:
+                student_lookup = {}
+                for s in roster:
+                    d = s.to_dict()
+                    student_lookup[s.id] = {
+                        "name": d.get("display_name") or s.id.split("@")[0],
+                        "grade": d.get("grade") or "Grade 6"
+                    }
+
+                search_query = st.text_input("🔍 Search student by name...")
+                all_grades = sorted(set(v["grade"] for v in student_lookup.values()))
+                grade_filter = st.selectbox("Filter by Grade", ["All Grades"] + all_grades)
+                
+                # Removed time filter temporarily to prevent cutoff crashes
+                filtered_students = {
+                    e: inf for e, inf in student_lookup.items()
+                    if (search_query.lower() in inf["name"].lower() or not search_query) and
+                       (grade_filter == "All Grades" or inf["grade"] == grade_filter)
                 }
 
-            search_query = st.text_input("🔍 Search student by name...")
-
-            all_grades = sorted(set(v["grade"] for v in student_lookup.values()))
-            grade_filter = st.selectbox("Filter by Grade", ["All Grades"] + all_grades)
-            time_filter = st.radio("Show interactions from", ["Last 12 Hours", "Last 24 Hours", "Last 3 Days", "Last 7 Days"], horizontal=True)
-            
-            tmap = {"Last 12 Hours": 43200, "Last 24 Hours": 86400, "Last 3 Days": 259200, "Last 7 Days": 604800}
-            cutoff = time.time() - tmap[time_filter]
-
-            filtered_students = {
-                e: inf for e, inf in student_lookup.items()
-                if (search_query.lower() in inf["name"].lower() or not search_query) and
-                   (grade_filter == "All Grades" or inf["grade"] == grade_filter)
-            }
-
-            if not filtered_students:
-                st.warning("No students match your search/filter.")
-            else:
-                disp_list = [f"{inf['name']} ({inf['grade']})" for inf in filtered_students.values()]
-                e_list = list(filtered_students.keys())
-                sel_idx = st.selectbox("Select Student", range(len(disp_list)), format_func=lambda i: disp_list[i])
-                
-                selected_student = e_list[sel_idx]
-                selected_name = filtered_students[selected_student]["name"]
-
-                st.markdown(f"### Report for **{selected_name}**")
-
-                # 2. Get Subjects Taught
-                my_classes_raw = list(db.collection("classes").where(filter=firestore.FieldFilter("created_by", "==", user_email)).stream())
-                tsubjs = []
-                for c in my_classes_raw:
-                    if selected_student in c.to_dict().get("students", []):
-                        tsubjs = c.to_dict().get("subjects", [])
-                        break
-
-                # 3. Data Processing Variables
-                analytics_docs = db.collection("users").document(selected_student).collection("analytics").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(100).stream()
-                
-                recent_w = set()
-                recent_q = []
-                total_score = 0
-                score_count = 0
-
-                chapter_stats = {}
-
-                for doc in analytics_docs:
-                    data = doc.to_dict()
+                if not filtered_students:
+                    st.warning("No students match your search/filter.")
+                else:
+                    disp_list = [f"{inf['name']} ({inf['grade']})" for inf in filtered_students.values()]
+                    e_list = list(filtered_students.keys())
+                    sel_idx = st.selectbox("Select Student", range(len(disp_list)), format_func=lambda i: disp_list[i])
                     
-                    doc_subject = data.get("subject", "General")
-                
-                    if tsubjs:
-                        if not any(doc_subject.lower() in t.lower() or t.lower() in doc_subject.lower() for t in tsubjs):
+                    selected_student = e_list[sel_idx]
+                    selected_name = filtered_students[selected_student]["name"]
+
+                    st.markdown(f"### Report for **{selected_name}**")
+
+                    my_classes_raw = list(db.collection("classes").where(filter=firestore.FieldFilter("created_by", "==", user_email)).stream())
+                    tsubjs = []
+                    for c in my_classes_raw:
+                        if selected_student in c.to_dict().get("students", []):
+                            tsubjs = c.to_dict().get("subjects", [])
+                            break
+
+                    analytics_docs = db.collection("users").document(selected_student).collection("analytics").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(100).stream()
+                    
+                    recent_w = set()
+                    recent_q = []
+                    total_score = 0
+                    score_count = 0
+                    chapter_stats = {}
+
+                    for doc in analytics_docs:
+                        data = doc.to_dict()
+                        
+                        doc_subject = data.get("subject", "General")
+                        if tsubjs:
+                            # Safely check if the subject matches
+                            if not any(doc_subject.lower() in t.lower() or t.lower() in doc_subject.lower() for t in tsubjs):
+                                continue
+                            
+                        raw_score = data.get("score")
+                        try:
+                            score = int(raw_score)
+                        except (ValueError, TypeError):
                             continue
+                            
+                        ch_num = data.get("chapter_number", 0)
+                        ch_name = data.get("chapter_name", "General Concepts")
                         
-                    raw_score = data.get("score")
-                    try:
-                        score = int(raw_score)
-                    except (ValueError, TypeError):
-                        continue
+                        total_score += score
+                        score_count += 1
                         
-                    ch_num = data.get("chapter_number", 0)
-                    ch_name = data.get("chapter_name", "General Concepts")
-                    
-                    total_score += score
-                    score_count += 1
-
-         
-                    ch_key = f"{doc_subject} | Ch {ch_num}: {ch_name}" if ch_num > 0 else f"{doc_subject} | {ch_name}"
-                    if ch_key not in chapter_stats:
-                        chapter_stats[ch_key] = {"total": 0, "count": 0}
+                        ch_key = f"{doc_subject} | Ch {ch_num}: {ch_name}" if ch_num > 0 else f"{doc_subject} | {ch_name}"
+                        if ch_key not in chapter_stats:
+                            chapter_stats[ch_key] = {"total": 0, "count": 0}
                         chapter_stats[ch_key]["total"] += score
                         chapter_stats[ch_key]["count"] += 1
 
-                    wp = data.get("weak_point")
-                    if wp and str(wp).lower() not in ["none", "null", ""]:
-                        ch_display = f"Ch {ch_num}: {ch_name}" if ch_num > 0 else ch_name
-                        recent_w.add(f"**{doc_subject} ({ch_display}):** {wp}")
-                        
-                    qa = data.get("question_asked")
-                    if qa and str(qa).lower() not in ["none", "null", ""]:
-                        recent_q.append(qa)
-
-                # 4. Global Metrics
-                health = int(total_score / score_count) if score_count > 0 else 0
-                
-                if score_count == 0 and not recent_q:
-                    st.info(f"{selected_name} has no interactions in this subject/time range.")
-                else:
-                    if health >= 80: s_lbl = f"🟢 {health}% (Excellent)"
-                    elif health >= 50: s_lbl = f"🟠 {health}% (Average)"
-                    else: s_lbl = f"🔴 {health}% (Needs Help)"
-                    
-                    c1, c2, c3 = st.columns(3)
-                    with c1: st.metric("Questions Asked", len(recent_q))
-                    with c2: st.metric("Overall Concept Mastery", s_lbl)
-                    with c3: st.metric("Data Points Analyzed", score_count)
-                    
-                    st.divider()
-
-                    # 5. NEW: Chapter-by-Chapter Mastery UI
-                    st.markdown("### 📚 Chapter Mastery Breakdown")
-                    if chapter_stats:
-                        for ch_key, stats in chapter_stats.items():
-                            ch_avg = int(stats["total"] / stats["count"])
-                            # Color coding based on score
-                            if ch_avg >= 80: bar_color = "#2ecc71"  # Green
-                            elif ch_avg >= 50: bar_color = "#f1c40f" # Yellow
-                            else: bar_color = "#e74c3c"             # Red
+                        wp = data.get("weak_point")
+                        if wp and str(wp).lower() not in ["none", "null", ""]:
+                            ch_display = f"Ch {ch_num}: {ch_name}" if ch_num > 0 else ch_name
+                            recent_w.add(f"**{doc_subject} ({ch_display}):** {wp}")
                             
-                            st.markdown(f"**{ch_key}** — {ch_avg}%")
-                            st.markdown(
-                                f"""
-                                <div style="width: 100%; background-color: rgba(255,255,255,0.1); border-radius: 5px; margin-bottom: 15px;">
-                                  <div style="width: {ch_avg}%; background-color: {bar_color}; height: 8px; border-radius: 5px;"></div>
-                                </div>
-                                """, unsafe_allow_html=True
-                            )
+                        qa = data.get("question_asked")
+                        if qa and str(qa).lower() not in ["none", "null", ""]:
+                            recent_q.append(qa)
+
+                    health = int(total_score / score_count) if score_count > 0 else 0
+                    
+                    if score_count == 0 and not recent_q:
+                        st.info(f"{selected_name} has no valid mathematical interactions yet.")
                     else:
-                        st.caption("Not enough data to calculate chapter mastery.")
-
-                    st.divider()
-
-                    # 6. Weak Points & Questions
-                    c4, c5 = st.columns(2)
-                    with c4:
-                        st.markdown("#### 🚨 Identified Weak Points")
-                        if recent_w:
-                            for w in list(recent_w)[:7]: st.error(w)
-                        else: st.success("No major weak points identified!")
-                    with c5:
-                        st.markdown("#### 💬 Recently Asked Questions")
-                        if recent_q:
-                            for q in recent_q[:5]: st.info(q)
-                        else: st.write("No direct questions asked recently.")
+                        if health >= 80: s_lbl = f"🟢 {health}% (Excellent)"
+                        elif health >= 50: s_lbl = f"🟠 {health}% (Average)"
+                        else: s_lbl = f"🔴 {health}% (Needs Help)"
+                        
+                        c1, c2, c3 = st.columns(3)
+                        with c1: st.metric("Questions Asked", len(recent_q))
+                        with c2: st.metric("Overall Mastery", s_lbl)
+                        with c3: st.metric("Data Points", score_count)
+                        
+                        st.divider()
+                        st.markdown("### 📚 Chapter Mastery Breakdown")
+                        if chapter_stats:
+                            for ch_key, stats in chapter_stats.items():
+                                ch_avg = int(stats["total"] / stats["count"])
+                                if ch_avg >= 80: bar_color = "#2ecc71"
+                                elif ch_avg >= 50: bar_color = "#f1c40f"
+                                else: bar_color = "#e74c3c"
+                                
+                                st.markdown(f"**{ch_key}** — {ch_avg}%")
+                                st.markdown(
+                                    f"""<div style="width: 100%; background-color: rgba(255,255,255,0.1); border-radius: 5px; margin-bottom: 15px;">
+                                      <div style="width: {ch_avg}%; background-color: {bar_color}; height: 8px; border-radius: 5px;"></div>
+                                    </div>""", unsafe_allow_html=True
+                                )
+                        
+                        st.divider()
+                        c4, c5 = st.columns(2)
+                        with c4:
+                            st.markdown("#### 🚨 Identified Weak Points")
+                            if recent_w:
+                                for w in list(recent_w)[:7]: st.error(w)
+                            else: st.success("No major weak points!")
+                        with c5:
+                            st.markdown("#### 💬 Recently Asked Questions")
+                            if recent_q:
+                                for q in recent_q[:5]: st.info(q)
+                            else: st.write("No questions recently.")
+        except Exception as e:
+            st.error(f"A critical error occurred while loading analytics: {e}")
 
 
     # ── MENU 3: ASSIGN PAPERS
