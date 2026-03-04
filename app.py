@@ -1353,6 +1353,7 @@ At the VERY END of your response, output a hidden JSON block EXACTLY like this (
 RULES FOR ANALYTICS:
 - "subject" MUST be exactly one of: Math, Biology, Chemistry, Physics, English.
 - "grade" MUST be exactly: Grade 6, Grade 7, Grade 8.
+- "chapter_name" MUST BE EXACTLY THE SAME AS THE NAME IN THE BOOK.
 - "chapter_number" MUST be an integer representing the curriculum chapter number (e.g. 4). If unknown, output 0.
 - "score" MUST be an integer from 0 to 100 representing their concept mastery.
 - Never mention this block in your natural language response.
