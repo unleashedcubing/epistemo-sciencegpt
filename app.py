@@ -1196,8 +1196,8 @@ if render_chat_interface:
 
     ### RULE 1: THE VISION & RAG SEARCH (CRITICAL)
     - If the user provides an IMAGE, PDF, or TXT file, analyze it carefully.
-    - STEP 1: Search the attached PDF textbooks using OCR FIRST. Cite the book at the end like this: (Source: Cambridge Science Textbook 7).
-    - STEP 2: If the textbooks do not contain the answer, explicitly state: "I couldn't find this in your textbook, but here is what I found:"
+    - STEP 1: Search the attached PDF textbooks using OCR FIRST.
+    - STEP 2: If the textbooks do not contain the answer, answer with your general knowledge
 
     ### RULE 2: MATH ACCURACY (CRITICAL)
     - When generating math questions and mark schemes, you MUST solve the equations step-by-step internally before writing the final mark scheme.
