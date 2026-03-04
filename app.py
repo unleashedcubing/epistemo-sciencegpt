@@ -1358,12 +1358,16 @@ At the VERY END of your response, output a hidden JSON block EXACTLY like this (
   "question_asked": "The user's exact question, or None"
 }]
 RULES FOR ANALYTICS:
-- "subject" MUST be exactly one of: Math, Biology, Chemistry, Physics, English. (YOU MUST SPLIT SCIENCE INTO 3 STREAMS!!!!)
-- "grade" MUST be exactly: Grade 6, Grade 7, Grade 8.
-- "chapter_name" MUST BE EXACTLY THE SAME AS THE NAME IN THE BOOK!!!
-- "chapter_number" MUST BE THE SAME AS GIVEN IN THE BOOK!!!
-- "score" MUST be an integer from 0 to 100 representing their concept mastery.
+- `subject` MUST be exactly one of: "Math", "Biology", "Chemistry", "Physics", "English". 
+  **CRITICAL:** If the user asks a Science question, you MUST determine which specific branch it is and output "Biology", "Chemistry", or "Physics". NEVER output "Science".
+- `grade` MUST be exactly "Grade 6", "Grade 7", or "Grade 8".
+- `chapter_name` AND `chapter_number`: You MUST search the provided textbook PDFs to find the EXACT chapter name and number where the current topic is taught. 
+  - Do NOT guess or use general knowledge for the curriculum structure.
+  - If the topic is "circuits", look at the Table of Contents in the provided PDF to find the exact chapter name (e.g., "Electricity") and its corresponding number.
+  - If you absolutely cannot find it in the provided documents, output "Unknown" for the name and 0 for the number.
+- `score` MUST be an integer from 0 to 100 representing their concept mastery. 
 - Never mention this block in your natural language response.
+
 
 ### RULE 8: Very Important: Grade Scheme
 The books are labeled as Stage 7, but Stage 7 correlates to grade 6. Stage 8 correlates to grade 7. When it's mentioned 7 in the book name, that means it's grade 6. When it's mentioned 8 in the book name, that means it's grade 7. When it's mentioned 9 in the book name, that means it's grade 8. Follow this new naming scheme. 
