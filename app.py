@@ -903,102 +903,155 @@ if user_role == "teacher":
                                     st.rerun()
 
     # ── MENU 2: STUDENT ANALYTICS
-    elif teacher_menu == "📊 Student Analytics":
+    elif teacher_menu == "Student Analytics":
         st.subheader("📊 Student Insights & Learning Gaps")
-        if not roster: st.info("Add students in the Class Management tab to view their analytics.")
+        if not roster:
+            st.info("Add students in the Class Management tab to view their analytics.")
         else:
+            # 1. Setup Student Lookup & Filters
             student_lookup = {}
             for s in roster:
                 d = s.to_dict()
-                student_lookup[s.id] = {"name": d.get("display_name") or s.id.split("@")[0], "grade": d.get("grade") or "Grade 6"}
+                student_lookup[s.id] = {
+                    "name": d.get("display_name") or s.id.split("@")[0],
+                    "grade": d.get("grade") or "Grade 6"
+                }
 
             search_query = st.text_input("🔍 Search student by name...")
             all_grades = sorted(set(v["grade"] for v in student_lookup.values()))
-            grade_filter = st.selectbox("Filter by Grade:", ["All Grades"] + all_grades)
-
-            time_filter = st.radio("Show interactions from:", ["Last 12 Hours", "Last 24 Hours", "Last 3 Days", "Last 7 Days"], horizontal=True)
-            t_map = {"Last 12 Hours": 12*3600, "Last 24 Hours": 24*3600, "Last 3 Days": 3*86400, "Last 7 Days": 7*86400}
-            cutoff = time.time() - t_map[time_filter]
+            grade_filter = st.selectbox("Filter by Grade", ["All Grades"] + all_grades)
+            time_filter = st.radio("Show interactions from", ["Last 12 Hours", "Last 24 Hours", "Last 3 Days", "Last 7 Days"], horizontal=True)
+            
+            tmap = {"Last 12 Hours": 43200, "Last 24 Hours": 86400, "Last 3 Days": 259200, "Last 7 Days": 604800}
+            cutoff = time.time() - tmap[time_filter]
 
             filtered_students = {
                 e: inf for e, inf in student_lookup.items()
-                if (search_query.lower() in inf["name"].lower() or not search_query)
-                and (grade_filter == "All Grades" or inf["grade"] == grade_filter)
+                if (search_query.lower() in inf["name"].lower() or not search_query) and
+                   (grade_filter == "All Grades" or inf["grade"] == grade_filter)
             }
 
-            if not filtered_students: st.warning("No students match your search/filter.")
+            if not filtered_students:
+                st.warning("No students match your search/filter.")
             else:
                 disp_list = [f"{inf['name']} ({inf['grade']})" for inf in filtered_students.values()]
                 e_list = list(filtered_students.keys())
-                sel_idx = st.selectbox("Select Student:", range(len(disp_list)), format_func=lambda i: disp_list[i])
+                sel_idx = st.selectbox("Select Student", range(len(disp_list)), format_func=lambda i: disp_list[i])
+                
                 selected_student = e_list[sel_idx]
                 selected_name = filtered_students[selected_student]["name"]
 
-                st.markdown(f"### 📋 Report for **{selected_name}**")
-                
+                st.markdown(f"### Report for **{selected_name}**")
+
+                # 2. Get Subjects Taught
                 my_classes_raw = list(db.collection("classes").where(filter=firestore.FieldFilter("created_by", "==", user_email)).stream())
-                t_subjs = []
+                tsubjs = []
                 for c in my_classes_raw:
                     if selected_student in c.to_dict().get("students", []):
-                        t_subjs = c.to_dict().get("subjects", [])
+                        tsubjs = c.to_dict().get("subjects", [])
                         break
 
-                analytics_docs = db.collection("users").document(selected_student).collection("analytics").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(50).stream()
+                # 3. Data Processing Variables
+                analytics_docs = db.collection("users").document(selected_student).collection("analytics").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(100).stream()
                 
                 recent_w = set()
                 recent_q = []
-                p_c = a_c = g_c = 0
+                total_score = 0
+                score_count = 0
+                
+                # New Dictionary to track Chapter Mastery
+                chapter_stats = {}
 
                 for doc in analytics_docs:
                     data = doc.to_dict()
-                    if data.get("timestamp", 0) < cutoff: continue
-                    topic_lower = data.get("topic", "").lower()
+                    if data.get("timestamp", 0) < cutoff:
+                        continue
+                        
+                    doc_subject = data.get("subject", "General")
+                    if tsubjs and doc_subject not in tsubjs:
+                        continue
+                        
+                     score = data.get("score")
+                    ch_num = data.get("chapter_number", 0)
+                    ch_name = data.get("chapter_name", "General Concepts")
+                    
+                    if score is None:
+                        continue 
 
-                    if t_subjs:
-                        matches = (
-                            ("Math" in t_subjs and any(k in topic_lower for k in ["math", "algebra", "geometry", "fraction", "equation"])) or
-                            ("Biology" in t_subjs and any(k in topic_lower for k in ["biology", "cell", "organism", "plant", "animal", "genetics"])) or
-                            ("Chemistry" in t_subjs and any(k in topic_lower for k in ["chemistry", "element", "compound", "reaction", "acid", "periodic"])) or
-                            ("Physics" in t_subjs and any(k in topic_lower for k in ["physics", "force", "gravity", "motion", "energy", "wave", "light"])) or
-                            ("English" in t_subjs and any(k in topic_lower for k in ["english", "grammar", "poem", "essay", "writing", "story"]))
-                        )
-                        if not matches: continue
-
-                    lvl = data.get("understanding_level", "Unknown")
-                    if lvl == "Poor": p_c += 1
-                    elif lvl == "Average": a_c += 1
-                    elif lvl == "Good": g_c += 1
+                    
+                    if isinstance(score, (int, float)):
+                        total_score += score
+                        score_count += 1
+                        
+                        # Accumulate scores per chapter
+                        ch_key = f"{doc_subject} | Ch {ch_num}: {ch_name}" if ch_num > 0 else f"{doc_subject} | {ch_name}"
+                        if ch_key not in chapter_stats:
+                            chapter_stats[ch_key] = {"total": 0, "count": 0}
+                        chapter_stats[ch_key]["total"] += score
+                        chapter_stats[ch_key]["count"] += 1
 
                     wp = data.get("weak_point")
-                    if wp and wp != "None": recent_w.add(f"{data.get('topic', '')}: {wp}")
+                    if wp and str(wp).lower() not in ["none", "null", ""]:
+                        ch_display = f"Ch {ch_num}: {ch_name}" if ch_num > 0 else ch_name
+                        recent_w.add(f"**{doc_subject} ({ch_display}):** {wp}")
+                        
                     qa = data.get("question_asked")
-                    if qa and qa != "None": recent_q.append(qa)
+                    if qa and str(qa).lower() not in ["none", "null", ""]:
+                        recent_q.append(qa)
 
-                tot = p_c + a_c + g_c
-                if tot == 0 and not recent_q: st.info(f"{selected_name} has no interactions in this time range.")
+                # 4. Global Metrics
+                health = int(total_score / score_count) if score_count > 0 else 0
+                
+                if score_count == 0 and not recent_q:
+                    st.info(f"{selected_name} has no interactions in this subject/time range.")
                 else:
-                    health = int(((g_c * 1.0 + a_c * 0.5) / tot) * 100) if tot > 0 else 0
-                    if health >= 80: s_lbl = f"{health}% 🟢"
-                    elif health >= 50: s_lbl = f"{health}% 🟡"
-                    else: s_lbl = f"{health}% 🔴"
-
+                    if health >= 80: s_lbl = f"🟢 {health}% (Excellent)"
+                    elif health >= 50: s_lbl = f"🟠 {health}% (Average)"
+                    else: s_lbl = f"🔴 {health}% (Needs Help)"
+                    
                     c1, c2, c3 = st.columns(3)
                     with c1: st.metric("Questions Asked", len(recent_q))
-                    with c2: st.metric("Concept Mastery", s_lbl)
-                    with c3: st.metric("Breakdown", f"✅{g_c} 🟡{a_c} ❌{p_c}")
+                    with c2: st.metric("Overall Concept Mastery", s_lbl)
+                    with c3: st.metric("Data Points Analyzed", score_count)
+                    
+                    st.divider()
+
+                    # 5. NEW: Chapter-by-Chapter Mastery UI
+                    st.markdown("### 📚 Chapter Mastery Breakdown")
+                    if chapter_stats:
+                        for ch_key, stats in chapter_stats.items():
+                            ch_avg = int(stats["total"] / stats["count"])
+                            # Color coding based on score
+                            if ch_avg >= 80: bar_color = "#2ecc71"  # Green
+                            elif ch_avg >= 50: bar_color = "#f1c40f" # Yellow
+                            else: bar_color = "#e74c3c"             # Red
+                            
+                            st.markdown(f"**{ch_key}** — {ch_avg}%")
+                            st.markdown(
+                                f"""
+                                <div style="width: 100%; background-color: rgba(255,255,255,0.1); border-radius: 5px; margin-bottom: 15px;">
+                                  <div style="width: {ch_avg}%; background-color: {bar_color}; height: 8px; border-radius: 5px;"></div>
+                                </div>
+                                """, unsafe_allow_html=True
+                            )
+                    else:
+                        st.caption("Not enough data to calculate chapter mastery.")
 
                     st.divider()
+
+                    # 6. Weak Points & Questions
                     c4, c5 = st.columns(2)
                     with c4:
-                        st.markdown("🚨 **Identified Weak Points**")
+                        st.markdown("#### 🚨 Identified Weak Points")
                         if recent_w:
-                            for w in list(recent_w)[:5]: st.error(w)
+                            for w in list(recent_w)[:7]: st.error(w)
                         else: st.success("No major weak points identified!")
                     with c5:
-                        st.markdown("💬 **Recently Asked Questions**")
+                        st.markdown("#### 💬 Recently Asked Questions")
                         if recent_q:
                             for q in recent_q[:5]: st.info(q)
                         else: st.write("No direct questions asked recently.")
+
 
     # ── MENU 3: ASSIGN PAPERS
     elif teacher_menu == "📝 Assign Papers":
@@ -1023,6 +1076,7 @@ if user_role == "teacher":
         - Clean numbering, marks like [3].
         - Include '## Mark Scheme' at the end.
         - Append [PDF_READY] at the end.
+        - Do not hallucinate adding school names or any of that. Just use the assignment title as the title of the paper.
         """
 
         if st.button("🤖 Generate with Helix AI", use_container_width=True, type="primary"):
@@ -1284,8 +1338,9 @@ Chapter 7 • Testing your skills
     ### RULE 6: MARK SCHEME
     - Put "## Mark Scheme" at the very bottom. No citations inside mark scheme.
 
+   ### RULE 7: Analytics for students:
    If the user asks a question about a concept or attempts to answer a question, evaluate their understanding. 
-At the VERY END of your response, output a hidden JSON block EXACTLY like this:
+At the VERY END of your response, output a hidden JSON block EXACTLY like this (this is an example):
 [ANALYTICS: {
   "subject": "Math", 
   "grade": "Grade 7",
@@ -1297,10 +1352,13 @@ At the VERY END of your response, output a hidden JSON block EXACTLY like this:
 }]
 RULES FOR ANALYTICS:
 - "subject" MUST be exactly one of: Math, Biology, Chemistry, Physics, English.
-- "grade" MUST be exactly: Grade 6, Grade 7, Grade 8, Grade 9, or Grade 10.
+- "grade" MUST be exactly: Grade 6, Grade 7, Grade 8.
 - "chapter_number" MUST be an integer representing the curriculum chapter number (e.g. 4). If unknown, output 0.
 - "score" MUST be an integer from 0 to 100 representing their concept mastery.
 - Never mention this block in your natural language response.
+
+### RULE 8: Very Important: Grade Scheme
+The books are labeled as Stage 7, but Stage 7 correlates to grade 6. Stage 8 correlates to grade 7. When it's mentioned 7 in the book name, that means it's grade 6. When it's mentioned 8 in the book name, that means it's grade 7. When it's mentioned 9 in the book name, that means it's grade 8. Follow this new naming scheme. 
 
     """
 
@@ -1390,13 +1448,8 @@ RULES FOR ANALYTICS:
                 has_attachment = file_bytes is not None
                 relevant_books = select_relevant_books(prompt + " science stage 8" if has_attachment else prompt, st.session_state.textbook_handles)
 
-                if relevant_books:
-                    book_names = [get_friendly_name(b.display_name) for b in relevant_books]
-                    st.caption(f"🔍 *Scanning Curriculum: {', '.join(book_names)}*")
-                else:
-                    st.caption("🔍 *Analyzing attached file...*" if has_attachment else "⚡ *Quick reply (General Knowledge)*")
 
-                thinking_placeholder.markdown("""<div class="thinking-container"><span class="thinking-text">🧠 Reading & Looking...</span><div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>""", unsafe_allow_html=True)
+                thinking_placeholder.markdown("""<div class="thinking-container"><span class="thinking-text">Thinking</span><div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>""", unsafe_allow_html=True)
 
                 current_prompt_parts = []
                 temp_pdf_path = None
@@ -1448,11 +1501,15 @@ RULES FOR ANALYTICS:
                         if is_authenticated and db is not None:
                             db.collection("users").document(auth_object.email).collection("analytics").add({
                                 "timestamp": time.time(),
-                                "topic": analytics_data.get("topic", "General"),
-                                "understanding_level": analytics_data.get("understanding_level", "Unknown"),
+                                "subject": analytics_data.get("subject", "General"),
+                                "grade": analytics_data.get("grade", "Unknown"),
+                                "chapter_number": int(analytics_data.get("chapter_number", 0)),
+                                "chapter_name": analytics_data.get("chapter_name", "General"),
+                                "score": int(analytics_data.get("score", 50)),
                                 "weak_point": analytics_data.get("weak_point", "None"),
                                 "question_asked": analytics_data.get("question_asked", "None")
                             })
+                            
                     except Exception as e: print(f"Analytics extraction error: {e}")
 
                 thinking_placeholder.empty()
