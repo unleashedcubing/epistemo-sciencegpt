@@ -460,7 +460,7 @@ def chat_settings_dialog(thread_data):
         st.rerun()
 
 # =====================================================================
-# 🔴 HELIX ADMIN MODE (Paste right above `with st.sidebar:`)
+# 🔴 HELIX ADMIN MODE
 # =====================================================================
 ADMIN_VERIFICATION_CODE = st.secrets.get("ADMIN_VERIFICATION_CODE")
 
@@ -640,9 +640,10 @@ with st.sidebar:
         if st.button("Log in with Google", type="primary", use_container_width=True):
             st.login(provider="google")
     else:
-        user_name = auth_object.get("name", "User")
-        role_display = f"\n{user_role.capitalize()}" if user_role not in ["undefined", "guest"] else ""
-        st.success(f"Welcome back, {user_name}!{role_display}")
+        username = getattr(auth_object, "name", None) or (user_email.split("@")[0] if user_email else "User")
+        role_display = f"\n{user_role.capitalize()}" if user_role not in ["undefined", "guest", None, ""] else ""
+        st.success(f"Welcome back, {username}!{role_display}")
+
 
         st.divider()
 
