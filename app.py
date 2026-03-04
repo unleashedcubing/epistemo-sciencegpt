@@ -123,10 +123,12 @@ def get_user_profile(email):
     else:
         google_name = getattr(auth_object, "name", None) or email.split("@")[0] if is_authenticated else email.split("@")[0]
         default_profile = {
-            "role": "student",
+            "role": "undefined",
             "teacher_id": None,
             "display_name": google_name,
-            "grade": "Grade 6" # Default
+            "grade": "Grade 6" 
+        }
+
         }
         doc_ref.set(default_profile)
         return default_profile
@@ -158,7 +160,7 @@ user_role = "guest"
 if is_authenticated:
     user_email = auth_object.email
     user_profile = get_user_profile(user_email)
-    user_role = user_profile.get("role", "student")
+    user_role = user_profile.get("role", "undefined")
 
 # -----------------------------
 # THREAD HELPERS
@@ -640,9 +642,8 @@ with st.sidebar:
             st.login(provider="google")
     else:
         user_name = auth_object.get("name", "User")
-        st.success(f"Welcome back, **{user_name}**! ({user_role.capitalize()})")
-        if st.button("Log out"):
-            st.logout()
+        role_display = f"\n{user_role.capitalize()}" if user_role not in ["undefined", "guest"] else ""
+        st.success(f"Welcome back, {username}!{role_display}")
 
         st.divider()
 
