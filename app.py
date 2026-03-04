@@ -633,17 +633,15 @@ with st.sidebar:
 
     if not is_authenticated:
         st.markdown("You are chatting as a Guest!\nLog in with Google to save history!")
-
-
-    if not is_authenticated:
-        st.markdown("👋 **You are chatting as a Guest!**\n\n*Log in with Google to save history!*")
         if st.button("Log in with Google", type="primary", use_container_width=True):
             st.login(provider="google")
     else:
         username = getattr(auth_object, "name", None) or (user_email.split("@")[0] if user_email else "User")
-        role_display = f"\n{user_role.capitalize()}" if user_role not in ["undefined", "guest", None, ""] else ""
+        role_display = f"\n{user_role.capitalize()}" if user_role not in ["undefined", "guest"] else ""
         st.success(f"Welcome back, {username}!{role_display}")
-
+        
+        if st.button("Log out"):
+            st.logout()
 
         st.divider()
 
