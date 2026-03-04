@@ -1016,9 +1016,9 @@ if user_role == "teacher":
                     if score_count == 0 and not recent_q:
                         st.info(f"{selected_name} has no interactions yet.")
                     else:
-                        if health >= 80: s_lbl = f"🟢 {health}% (Excellent)"
-                        elif health >= 50: s_lbl = f"🟠 {health}% (Average)"
-                        else: s_lbl = f"🔴 {health}% (Needs Help)"
+                        if health >= 80: s_lbl = f"🟢 {health}%"
+                        elif health >= 50: s_lbl = f"🟠 {health}%"
+                        else: s_lbl = f"🔴 {health}%"
                         
                         c1, c2, c3 = st.columns(3)
                         with c1: st.metric("Questions Asked", len(recent_q))
@@ -1372,7 +1372,7 @@ RULES FOR ANALYTICS:
 ### RULE 8: Very Important: Grade Scheme
 The books are labeled as Stage 7, but Stage 7 correlates to grade 6. Stage 8 correlates to grade 7. When it's mentioned 7 in the book name, that means it's grade 6. When it's mentioned 8 in the book name, that means it's grade 7. When it's mentioned 9 in the book name, that means it's grade 8. Follow this new naming scheme. 
 
-ALSO IMPORTANT: when you're creating questions for students, one by one on different queries/answers, ALWAYS check the book when creating questions, because sometimes you might find related topics but the syllabus might not be in the students' book. 
+ALSO IMPORTANT: when you're creating questions for students, one by one on different queries/answers, ALWAYS check the book when creating questions, because sometimes you might find related topics but the syllabus might not be in the students' book OR you might give the wrong chapter number or name which we don't want. SO ALWAYS CHECK THE BOOK IF YOU KNOW IT IS FROM THE BOOK. 
     """
 
     if is_authenticated and user_role == "student" and db is not None:
