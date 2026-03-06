@@ -90,12 +90,7 @@ else:
     st.error("Your Streamlit version is too old for Google Login.")
     st.stop()
 
-# -------------------------------------------------------------
-# SOFT LOGOUT WORKAROUND FOR STREAMLIT CLOUD
-# -------------------------------------------------------------
 is_authenticated = getattr(auth_object, "is_logged_in", False)
-if st.session_state.get("force_logout", False):
-    is_authenticated = False
 
 @st.cache_resource
 def get_firestore_client():
@@ -286,9 +281,10 @@ except Exception as e: st.error(f"🚨 Failed to initialize Gemini Client: {e}")
 # -----------------------------
 def process_visual_wrapper(vp):
     """
-    Returns a tuple: (image_bytes, model_name)
-    Properly routes to generate_images (for imagen) or generate_content (for gemini)
+    Returns a tuple: (image_bytes, model_name, error_logs_list)
+    Captures full trace errors for debugging.
     """
+    error_logs =[]
     try:
         v_type, v_data = vp
         if v_type == "IMAGE_GEN":
@@ -312,10 +308,11 @@ def process_visual_wrapper(vp):
                             )
                         )
                         if result.generated_images:
-                            return (result.generated_images[0].image.image_bytes, model_name)
+                            return (result.generated_images[0].image.image_bytes, model_name, error_logs)
+                        else:
+                            error_logs.append(f"{model_name}: Call succeeded but returned empty images list.")
                     else:
-                        # Gemini Native Image Generation (Nano Banana) via generate_content
-                        # Enforce 4:3 1k resolution via prompting for the multimodal model
+                        # Gemini Native Image Generation via generate_content
                         enhanced_prompt = f"{v_data}\n\n(Important: Generate a 1k resolution image with a 4:3 aspect ratio.)"
                         
                         result = client.models.generate_content(
@@ -328,12 +325,14 @@ def process_visual_wrapper(vp):
                         if result.candidates and result.candidates[0].content.parts:
                             for part in result.candidates[0].content.parts:
                                 if getattr(part, "inline_data", None) and part.inline_data.data:
-                                    return (part.inline_data.data, model_name)
+                                    return (part.inline_data.data, model_name, error_logs)
+                        error_logs.append(f"{model_name}: Call succeeded but returned no inline_data image part.")
                 except Exception as e:
-                    print(f"Image gen error with {model_name}: {e}")
+                    # Capture exact error trace for the UI
+                    error_logs.append(f"**{model_name} Error:** {str(e)}")
                     continue 
             
-            return None
+            return (None, "All Models Failed", error_logs)
 
         elif v_type == "PIE_CHART":
             try:
@@ -343,7 +342,9 @@ def process_visual_wrapper(vp):
                         k, v = item.split(":", 1)
                         labels.append(k.strip())
                         sizes.append(float(re.sub(r"[^\d\.]", "", v)))
-                if not labels or not sizes or len(labels) != len(sizes): return None
+                if not labels or not sizes or len(labels) != len(sizes): 
+                    error_logs.append("PIE_CHART: Invalid label sizes parsed.")
+                    return (None, "matplotlib_failed", error_logs)
                 fig = Figure(figsize=(5, 5), dpi=200)
                 FigureCanvas(fig)
                 ax = fig.add_subplot(111)
@@ -352,9 +353,14 @@ def process_visual_wrapper(vp):
                 ax.axis("equal")
                 buf = BytesIO()
                 fig.savefig(buf, format="png", bbox_inches="tight", transparent=True)
-                return (buf.getvalue(), "matplotlib")
-            except Exception: return None
-    except Exception: return None
+                return (buf.getvalue(), "matplotlib", error_logs)
+            except Exception as e: 
+                error_logs.append(f"PIE_CHART Error: {str(e)}")
+                return (None, "matplotlib_failed", error_logs)
+                
+    except Exception as e: 
+        error_logs.append(f"Wrapper Outer Error: {str(e)}")
+        return (None, "Crash", error_logs)
 
 # -----------------------------
 # PDF HELPER
@@ -739,27 +745,15 @@ with st.sidebar:
     if not is_authenticated:
         st.markdown("You are chatting as a Guest!\nLog in with Google to save history!")
         if st.button("Log in with Google", type="primary", use_container_width=True):
-            if st.session_state.get("force_logout", False):
-                st.session_state["force_logout"] = False
-                st.rerun()
-            else:
-                try:
-                    st.login(provider="google")
-                except Exception as e:
-                    st.error("Authentication Error: Streamlit Auth is likely not configured in your Cloud Settings.")
+            st.login(provider="google")
     else:
         username = getattr(auth_object, "name", None) or (user_email.split("@")[0] if user_email else "User")
         role_display = f"\n{user_role.capitalize()}" if user_role not in["undefined", "guest"] else ""
         st.success(f"Welcome back, {username}!{role_display}")
         
-        # Soft logout fixes the broken Streamlit Community Cloud endpoint hanging
+        # Pure Logout - Restored without try/except logic
         if st.button("Log out", use_container_width=True):
-            st.session_state["force_logout"] = True
-            st.session_state.current_thread_id = str(uuid.uuid4())
-            st.session_state.messages = get_default_greeting()
-            st.rerun()
-            
-        st.markdown("<div style='text-align: center;'><a href='/~/+/auth/logout' target='_self' style='font-size: 11px; color: gray; text-decoration: underline;'>Switch Accounts (Hard Logout)</a></div>", unsafe_allow_html=True)
+            st.logout()
 
         st.divider()
 
@@ -1131,7 +1125,7 @@ if user_role == "teacher":
                             recent_w.add(f"**{doc_subject} ({ch_display}):** {wp}")
                             
                         qa = data.get("question_asked")
-                        if qa and str(qa).lower() not in ["none", "null", ""]:
+                        if qa and str(qa).lower() not in["none", "null", ""]:
                             recent_q.append(qa)
 
                     health = int(total_score / score_count) if score_count > 0 else 0
@@ -1228,12 +1222,12 @@ if user_role == "teacher":
                         f"for {assign_stage} ({assign_grade}) students. \n"
                         f"Difficulty: {assign_difficulty}. Total marks: {assign_marks}. \n"
                         f"Instructions: {assign_extra if assign_extra else 'None'}. \n"
-                        f"Do NOT invent topics outside this syllabus. Append [PDF_READY] at the end."
+                        f"Do NOT invent topics outside this syllabus. Append[PDF_READY] at the end."
                     )
                     paper_contents.append(types.Part.from_text(text=gen_prompt))
 
                     gen_resp = client.models.generate_content(
-                        model="gemini-2.5-pro",
+                        model="gemini-2.5-flash",
                         contents=paper_contents,
                         config=types.GenerateContentConfig(
                             system_instruction=PAPER_SYSTEM, 
@@ -1251,8 +1245,16 @@ if user_role == "teacher":
                         with st.spinner("Drawing diagrams for the paper..."):
                             with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                                 gen_results = list(executor.map(process_visual_wrapper, draft_visual_prompts))
-                                draft_images = [res[0] for res in gen_results if res is not None]
-                                draft_models = [res[1] for res in gen_results if res is not None]
+                                
+                                for res in gen_results:
+                                    if res and res[0] is not None:
+                                        draft_images.append(res[0])
+                                        draft_models.append(res[1])
+                                    else:
+                                        draft_images.append(None)
+                                        draft_models.append("Failed")
+                                        if res and len(res) > 2 and res[2]:
+                                            st.error("🚨 Image Generation Debug Log:\n\n" + "\n\n".join(res[2]))
                     
                     st.session_state.draft_paper = gen_paper
                     st.session_state.draft_images = draft_images  
@@ -1562,7 +1564,7 @@ The books are labeled as Stage 7, but Stage 7 correlates to grade 6. Stage 8 cor
                         st.image(img_bytes, use_container_width=True, output_format="PNG", caption=f"✨ Generated by helix.ai ({mod_name})")
             
             elif message.get("db_images"):
-                models = message.get("image_models", ["Unknown"] * len(message["db_images"]))
+                models = message.get("image_models",["Unknown"] * len(message["db_images"]))
                 for b64_str, mod_name in zip(message["db_images"], models):
                     if b64_str:
                         try:
@@ -1722,7 +1724,7 @@ The books are labeled as Stage 7, but Stage 7 correlates to grade 6. Stage 8 cor
 
 
                 history_contents =[]
-                text_msgs = [m for m in st.session_state.messages[:-1] if not m.get("is_greeting")]
+                text_msgs =[m for m in st.session_state.messages[:-1] if not m.get("is_greeting")]
                 for msg in text_msgs[-7:]:
                     role = "user" if msg["role"] == "user" else "model"
                     history_contents.append(types.Content(role=role, parts=[types.Part.from_text(text=msg.get("content") or "")]))
@@ -1769,13 +1771,21 @@ The books are labeled as Stage 7, but Stage 7 correlates to grade 6. Stage 8 cor
                     
                     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
                         gen_results = list(executor.map(process_visual_wrapper, visual_prompts))
-                        generated_images = [res[0] for res in gen_results if res is not None]
-                        generated_models = [res[1] for res in gen_results if res is not None]
+                        
+                        for res in gen_results:
+                            if res and res[0] is not None:
+                                generated_images.append(res[0])
+                                generated_models.append(res[1])
+                            else:
+                                generated_images.append(None)
+                                generated_models.append("Failed")
+                                bot_text += "\n\n⚠️ *Helix tried to draw a diagram here, but the image generator failed.*"
+                                if res and len(res) > 2 and res[2]:
+                                    bot_text += "\n\n**🔍 DEBUG LOG:**"
+                                    for err in res[2]:
+                                        bot_text += f"\n- `{err}`"
 
                     img_thinking.empty()
-                    
-                    if any(res is None for res in gen_results):
-                        bot_text += "\n\n⚠️ *Helix tried to draw a diagram here, but the image generator is currently overloaded. Please try again later.*"
 
                 is_downloadable = ("[PDF_READY]" in bot_text or ("## Mark Scheme" in bot_text and re.search(r"\[\d+\]", bot_text) is not None))
 
