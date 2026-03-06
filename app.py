@@ -730,6 +730,22 @@ def get_friendly_name(filename: str) -> str:
     part_str = " (Part 1)" if "1" in parts[2:] else " (Part 2)" if "2" in parts[2:] else ""
     return f"Cambridge {subject} {book_type} {grade}{part_str}"
 
+def guess_mime(filename: str, fallback: str = "application/octet-stream") -> str:
+    name = (filename or "").lower()
+    if name.endswith((".jpg", ".jpeg")): return "image/jpeg"
+    if name.endswith(".png"): return "image/png"
+    if name.endswith(".webp"): return "image/webp"
+    if name.endswith(".avif"): return "image/avif"
+    if name.endswith(".svg"): return "image/svg+xml"
+    if name.endswith(".pdf"): return "application/pdf"
+    if name.endswith(".txt"): return "text/plain"
+    return fallback
+
+def is_image_mime(m: str) -> bool:
+    m = (m or "").lower()
+    return m.startswith("image/") or m in {"image/svg+xml"}
+
+
 @st.cache_resource(show_spinner=False)
 def upload_textbooks():
     target_filenames = [
@@ -1517,30 +1533,72 @@ The books are labeled as Stage 7, but Stage 7 correlates to grade 6. Stage 8 cor
 
                 thinking_placeholder.markdown("""<div class="thinking-container"><span class="thinking-text">Thinking</span><div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>""", unsafe_allow_html=True)
 
-                current_prompt_parts = []
-                temp_pdf_path = None
+                    current_prompt_parts = []
+                    temp_pdf_path = None
+                    
+                    if file_bytes:
+                        # 1. Reliably detect the MIME type
+                        mime = file_mime or guess_mime(filename)
 
-                if file_bytes:
-                    if "image" in (file_mime or ""): current_prompt_parts.append(types.Part.from_bytes(data=file_bytes, mime_type=file_mime))
-                    elif "pdf" in (file_mime or ""):
-                        temp_pdf_path = f"temp_user_upload_{int(time.time())}.pdf"
-                        with open(temp_pdf_path, "wb") as f: f.write(file_bytes)
-                        user_uploaded_pdf = client.files.upload(file=temp_pdf_path)
-                        while user_uploaded_pdf.state.name == "PROCESSING":
-                            time.sleep(1)
-                            user_uploaded_pdf = client.files.get(name=user_uploaded_pdf.name)
-                        current_prompt_parts.append(types.Part.from_uri(file_uri=user_uploaded_pdf.uri, mime_type="application/pdf"))
-                    elif "text/plain" in (file_mime or "") or (file_name or "").endswith(".txt"):
-                        raw_text = file_bytes.decode("utf-8", errors="ignore")
-                        current_prompt_parts.append(types.Part.from_text(text=f"--- Attached Text File ({file_name}) ---\n{raw_text}\n--- End of File ---\n"))
+                        # 2. Handle Images (JPG, PNG, WEBP, AVIF, SVG)
+                        if is_image_mime(mime):
+                            # Pass directly as bytes, no need to upload to Google Files API
+                            current_prompt_parts.append(
+                                types.Part.from_bytes(data=file_bytes, mime_type=mime)
+                            )
+                            
+                        # 3. Handle PDFs (Upload to Google Files API to handle large documents)
+                        elif "pdf" in mime:
+                            temp_pdf_path = f"temp_user_upload_{int(time.time())}.pdf"
+                            with open(temp_pdf_path, "wb") as f:
+                                f.write(file_bytes)
+                                
+                            user_uploaded_pdf = client.files.upload_file(temp_pdf_path)
+                            
+                            # Wait for file to fully process (increased sleep to prevent 403)
+                            while user_uploaded_pdf.state.name == "PROCESSING":
+                                time.sleep(2)
+                                user_uploaded_pdf = client.files.get(name=user_uploaded_pdf.name)
+                                
+                            if user_uploaded_pdf.state.name == "FAILED":
+                                st.error("Failed to process uploaded PDF on Google's servers.")
+                                st.stop()
+                                
+                            current_prompt_parts.append(
+                                types.Part.from_uri(file_uri=user_uploaded_pdf.uri, mime_type="application/pdf")
+                            )
+                            
+                        # 4. Handle Text files
+                        elif "text" in mime or filename.lower().endswith(".txt"):
+                            raw_text = file_bytes.decode("utf-8", errors="ignore")
+                            current_prompt_parts.append(
+                                types.Part.from_text(text=f"--- Attached Text File: {filename} ---\n{raw_text}\n--- End of File ---")
+                            )
+                            
+                        # 5. Unsupported formats
+                        else:
+                            st.warning(f"Unsupported file type: {mime} ({filename})")
 
-                for book in relevant_books:
-                    friendly = get_friendly_name(book.display_name)
-                    current_prompt_parts.append(types.Part.from_text(text=f"[Source Document: {friendly}]"))
-                    current_prompt_parts.append(types.Part.from_uri(file_uri=book.uri, mime_type="application/pdf"))
+                    # Attach Curriculum Textbooks (with expiration check to prevent 403)
+                    for book in relevant_books:
+                        try:
+                            # Verify the file still exists on Google's servers
+                            verified_book = client.files.get(name=book.name)
+                            friendly = get_friendly_name(verified_book.display_name)
+                            current_prompt_parts.append(types.Part.from_text(text=f"Source Document: {friendly}"))
+                            current_prompt_parts.append(types.Part.from_uri(file_uri=verified_book.uri, mime_type="application/pdf"))
+                        except Exception:
+                            # If Google deleted the file (happens after 48h), force a re-upload
+                            st.session_state.textbook_handles = upload_textbooks()
+                            st.error("Textbook cache expired. We just refreshed it, please ask your question again!")
+                            st.stop()
 
-                current_prompt_parts.append(types.Part.from_text(text=f"Please read the user query and look at attached files. Check Cambridge textbooks for accuracy if provided.\n\nQuery: {prompt}"))
-                current_content = types.Content(role="user", parts=current_prompt_parts)
+                    # Finally, attach the user's prompt
+                    current_prompt_parts.append(types.Part.from_text(text=f"Please read the user query and look at attached files. Check Cambridge textbooks for accuracy if provided.\n\n{prompt}"))
+                    
+                    current_content = types.Content(role="user", parts=current_prompt_parts)
+
+
 
                 history_contents = []
                 text_msgs = [m for m in st.session_state.messages[:-1] if not m.get("is_greeting")]
