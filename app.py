@@ -786,6 +786,12 @@ def upload_textbooks():
     msg_placeholder.empty()
     return active_files
 
+def recache_textbooks_for_session():
+    with st.spinner("Preparing your curriculum materials..."):
+        st.session_state.textbook_handles = upload_textbooks()
+        st.session_state.textbook_cached_at = time.time()
+
+
 def select_relevant_books(query, file_dict):
     qn = normalize_stage_text(query)
     selected = []
