@@ -790,6 +790,8 @@ def recache_textbooks_for_session():
     with st.spinner("Preparing your curriculum materials..."):
         st.session_state.textbook_handles = upload_textbooks()
         st.session_state.textbook_cached_at = time.time()
+if is_authenticated and "textbook_handles" not in st.session_state:
+    recache_textbooks_for_session()
 
 
 def select_relevant_books(query, file_dict):
