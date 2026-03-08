@@ -306,8 +306,8 @@ def process_visual_wrapper(vp):
         v_type, v_data = vp
         if v_type == "IMAGE_GEN":
             models_to_try =[
-                'gemini-3-pro-image-preview',
                 'gemini-3.1-flash-image-preview',
+                'gemini-3-pro-image-preview',
                 'imagen-4.0-fast-generate-001',
                 'gemini-2.5-flash-image'
             ]
