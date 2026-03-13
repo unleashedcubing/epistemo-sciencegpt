@@ -80,7 +80,11 @@ IMPORTANT: ALWAYS check the book when creating questions to ensure syllabus alig
 ### RULE 2: MATH ACCURACY (CRITICAL)
 - Solve equations step-by-step internally before writing the final mark scheme. Ensure variables match EXACTLY.
 
-### RULE 3: QUESTION PAPERS (CRITICAL FORMATTING)
+### RULE 3: QUESTION PAPERS (CRITICAL FORMATTING & DEPTH)
+- QUESTION DEPTH (CRITICAL): Questions MUST NOT be small, simple one-liners (avoid basic "Calculate 5+3"). They MUST be deep, detailed, scenario-based word problems.
+- COGNITIVE DEMAND: Force multi-step reasoning, critical analysis, evaluation, and synthesis. Interlock concepts (e.g., combine geometry with algebra, or data handling with probability). Ask students to justify, prove, or explain their reasoning. (Do NOT explicitly use the word 'HOTS', 'Higher Order', or similar pedagogical terms in the output).
+- QUESTION STRUCTURE: Use fewer main questions but make them rich and multi-part (a, b, c, d). Part (a) can be foundational, but subsequent parts must sharply ramp up in analytical difficulty.
+- VOLUME (MATH/SCIENCE): A 40M paper should have around 8-12 complex main questions. An 80M paper should have 15-20 complex main questions. Make every mark count through depth, not quantity.
 - SUBJECT RELEVANCE: NEVER mix subjects (e.g., Science diagrams in a Math paper).
 - NO LATEX MATH: DO NOT use LaTeX (no \\frac, \\times). Use plain text (/, x, *, ÷, ^, -, +, =).
 - Tables: Use standard Markdown tables. Do NOT use IMAGE_GEN for tables.
@@ -89,7 +93,6 @@ IMPORTANT: ALWAYS check the book when creating questions to ensure syllabus alig
 - Title: Use the requested assignment title as the EXACT title. Do not hallucinate school names.
 - PDF TRIGGER: If you generate a full formal question paper, append [PDF_READY] at the very end.
 - ENGLISH PAPERS: Generate informal paper if not specified. Minimum 15 questions per paper. 40M for grade 7/below, 50M for grade 8. Include grammar related to text, 750+ word reading comprehensions, poem comprehensions (max 200 words), and 2 mandatory writing tasks. 
-- Math PAPERS: 25 Questions for a 40M paper, 45+ questions for a 80m paper. In the whole paper, on average, EACH QUESTION MUST HAVE 2 BITS. (Some can have 1, 3 or 4 bits)
 
 ### RULE 4: English, Grade 8/Stage 9 Syllabus:
 {ENGLISH_SYLLABUS_G8}
@@ -97,12 +100,24 @@ IMPORTANT: ALWAYS check the book when creating questions to ensure syllabus alig
 ### RULE 5: VISUAL SYNTAX (STRICT)
 - For diagrams: IMAGE_GEN:[Detailed description of the image, educational, white background]
 - For pie charts: PIE_CHART:[Label1:Value1, Label2:Value2] 
-- When making graphs for rotation, mirroring, symmetry, etc, make sure you mention not to keep the correct answer in the image, like: IMAGE_GEN:[A triangle ABC on a grid with a vertical mirror line to the right, no mirrored triangle] not like IMAGE_GEN:[A triangle ABC on a grid with a vertical mirror line to the right].
-### RULE 6: MARK SCHEME
-- Put "## Mark Scheme" at the very bottom. No citations inside mark scheme.
+- When making graphs for rotation, mirroring, symmetry, etc., make sure you mention NOT to keep the correct answer in the image. Example: IMAGE_GEN:[A triangle ABC on a grid with a vertical mirror line to the right, no mirrored triangle] not like IMAGE_GEN:[A triangle ABC on a grid with a vertical mirror line to the right].
 
-### RULE 7: Analytics for students:
-At the VERY END of your response (hidden), output a JSON block EXACTLY like this:[ANALYTICS: {{ "subject": "Math", "grade": "Grade 7", "chapter_number": 4, "chapter_name": "Fractions", "score": 85, "weak_point": "None", "question_asked": "User query" }}]
+### RULE 6: MARK SCHEME
+- Put "## Mark Scheme" at the very bottom. No citations inside mark scheme. Provide step-by-step reasoning for the marks.
+
+### RULE 7: Analytics for students (CRITICAL, HIDDEN):
+At the VERY END of your response, you MUST output a hidden analytics block wrapped EXACTLY in these boundaries:
+===ANALYTICS_START===
+{{
+  "subject": "Math", 
+  "grade": "Grade 7", 
+  "chapter_number": 4, 
+  "chapter_name": "Fractions", 
+  "score": 85, 
+  "weak_point": "None", 
+  "question_asked": "User query" 
+}}
+===ANALYTICS_END===
 - `subject` MUST be "Math", "Biology", "Chemistry", "Physics", or "English" (NEVER "Science").
 - Find exact chapter details from the PDF TOC.
 
@@ -110,7 +125,7 @@ At the VERY END of your response (hidden), output a JSON block EXACTLY like this
 Stage 7 = Grade 6 | Stage 8 = Grade 7 | Stage 9 = Grade 8.
 """
 
-PAPER_SYSTEM = SYSTEM_INSTRUCTION  # They use the exact same constraints for generation
+PAPER_SYSTEM = SYSTEM_INSTRUCTION + "\n\nCRITICAL FOR PAPERS: DO NOT output the ===ANALYTICS_START=== block during paper generation."
 
 # -----------------------------
 # 1.5) GRADE <-> STAGE MAPPING
@@ -265,7 +280,7 @@ def save_chat_history():
 
         safe_messages.append({
             "role": str(role), "content": content_str, "is_greeting": bool(msg.get("is_greeting", False)),
-            "is_downloadable": bool(msg.get("is_downloadable", False)), "db_images": [i for i in db_images if i],
+            "is_downloadable": bool(msg.get("is_downloadable", False)), "db_images":[i for i in db_images if i],
             "image_models": msg.get("image_models",[])
         })
 
@@ -316,7 +331,7 @@ def process_visual_wrapper(vp):
                 buf = BytesIO(); fig.savefig(buf, format="png", bbox_inches="tight", transparent=True)
                 return (buf.getvalue(), "matplotlib", error_logs)
             except Exception as e: return (None, "matplotlib_failed", error_logs)
-    except Exception as e: return (None, "Crash", [str(e)])
+    except Exception as e: return (None, "Crash",[str(e)])
 
 # -----------------------------
 # PDF HELPER
@@ -331,7 +346,7 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle("CustomTitle", parent=styles["Heading1"], fontSize=18, textColor=colors.HexColor("#00d4ff"), spaceAfter=12, alignment=TA_CENTER, fontName="Helvetica-Bold")
     body_style = ParagraphStyle("CustomBody", parent=styles["BodyText"], fontSize=11, spaceAfter=8, alignment=TA_LEFT, fontName="Helvetica")
-    story, img_idx, table_rows = [], 0,[]
+    story, img_idx, table_rows =[], 0,[]
 
     def render_pending_table():
         nonlocal table_rows
@@ -346,7 +361,7 @@ def create_pdf(content: str, images=None, filename="Question_Paper.pdf"):
     
     for s in lines:
         if s.startswith("|") and s.endswith("|") and s.count("|") >= 2:
-            cells = [c.strip() for c in s.split("|")[1:-1]]
+            cells =[c.strip() for c in s.split("|")[1:-1]]
             if not all(re.fullmatch(r":?-+:?", c) for c in cells if c): table_rows.append(cells)
             continue
         render_pending_table()
@@ -423,34 +438,62 @@ def chat_settings_dialog(thread_data):
 # =====================================================================
 ADMIN_VERIFICATION_CODE = st.secrets.get("ADMIN_VERIFICATION_CODE")
 
+ADMIN_CSS = """
+<style>[data-testid="stAppViewContainer"] { background: linear-gradient(160deg, #1a0008 0%, #0d0010 60%, #0b000d 100%) !important; }[data-testid="stSidebar"] { background: linear-gradient(180deg, #2a0010 0%, #0d000a 100%) !important; }
+.admin-header { background: linear-gradient(135deg, rgba(225,29,72,0.18), rgba(153,0,30,0.12)); border: 1px solid rgba(225,29,72,0.35); border-radius: 16px; padding: 20px 28px; margin-bottom: 24px; }
+.admin-title { font-size: 1.9rem; font-weight: 800; background: linear-gradient(90deg, #ff4d6d, #ff8fa3); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin: 0; }
+.stat-card { background: rgba(225,29,72,0.08); border: 1px solid rgba(225,29,72,0.2); border-radius: 14px; padding: 18px 20px; text-align: center; margin-bottom: 15px; }
+.stat-number { font-size: 2.2rem; font-weight: 800; color: #ff4d6d; }
+.stat-label { font-size: 0.78rem; color: rgba(255,150,160,0.6); text-transform: uppercase; }
+.admin-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin-bottom: 20px; color: white; }
+.admin-table th { background: rgba(225,29,72,0.15); color: #ff8fa3; padding: 10px; text-align: left; border-bottom: 2px solid rgba(225,29,72,0.3); }
+.admin-table td { padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.05); color: rgba(255,200,205,0.85); }
+.section-header { font-size: 1.1rem; font-weight: 700; color: #ff6b81; border-left: 3px solid #e11d48; padding-left: 12px; margin: 20px 0 14px; }
+.admin-login-box { max-width: 420px; margin: 80px auto; background: rgba(225,29,72,0.07); border: 1px solid rgba(225,29,72,0.25); border-radius: 20px; padding: 40px 36px; text-align: center; }
+</style>
+"""
+
 def render_admin_panel():
+    st.markdown(ADMIN_CSS, unsafe_allow_html=True)
+    
     if not is_authenticated or auth_object.email not in st.secrets.get("ADMIN_EMAILS",[]):
         st.error("Unauthorized."); st.button("Return Home", on_click=lambda: st.session_state.update(current_page="chat")); return
 
     if not st.session_state.get("admin_authenticated"):
+        st.markdown(f'<div class="admin-login-box"><h2 style="color:#ff4d6d;margin-bottom:6px;">🔐 Admin Access</h2><p style="color:rgba(255,150,160,0.6);font-size:0.85rem;">Welcome {auth_object.email}.</p></div>', unsafe_allow_html=True)
         with st.form("admin_login"):
             if st.form_submit_button("🔓 Access Admin") and st.text_input("Code", type="password") == ADMIN_VERIFICATION_CODE:
                 st.session_state.update(admin_authenticated=True, admin_email=auth_object.email); st.rerun()
         return
 
+    st.markdown(f'<div class="admin-header"><div class="admin-title">⚙️ Helix Admin Console</div><div style="color:rgba(255,150,160,0.6);font-size:0.85rem;margin-top:4px;">Logged in as {auth_object.email}</div></div>', unsafe_allow_html=True)
+
     admin_school_filter = "All Schools"
     with st.sidebar:
-        admin_page = st.radio("Navigation",["📊 Dashboard", "🎓 Students", "👩‍🏫 Teachers", "🏫 Classes", "🧪 AI Debug Lab"])
+        st.markdown("<b style='color:#ff4d6d'>ADMIN NAVIGATION</b>", unsafe_allow_html=True)
+        admin_page = st.radio("Navigation",["📊 Dashboard", "🎓 Students", "👩‍🏫 Teachers", "🏫 Classes", "🧪 AI Debug Lab"], label_visibility="collapsed")
+        
+        st.markdown("---")
+        st.markdown("<b style='color:#ff4d6d'>🏫 SCHOOL FILTER</b>", unsafe_allow_html=True)
         all_schools = sorted(list(set([u.to_dict().get("school") for u in db.collection("users").where(filter=firestore.FieldFilter("role", "==", "teacher")).stream() if u.to_dict().get("school")]).union(SCHOOL_CODES.values())))
-        admin_school_filter = st.selectbox("School Filter", ["All Schools"] + all_schools)
+        admin_school_filter = st.selectbox("School Filter", ["All Schools"] + all_schools, label_visibility="collapsed")
+        
+        st.markdown("---")
         if st.button("🚪 Exit Admin", use_container_width=True): st.session_state.update(admin_authenticated=False, current_page="chat"); st.rerun()
 
     if admin_page == "📊 Dashboard":
-        st.subheader(f"System Overview ({admin_school_filter})")
+        st.markdown(f'<div class="section-header">📊 System Overview ({admin_school_filter})</div>', unsafe_allow_html=True)
         u_query = db.collection("users").stream() if admin_school_filter == "All Schools" else db.collection("users").where(filter=firestore.FieldFilter("school", "==", admin_school_filter)).stream()
         users =[u.to_dict() for u in u_query]
         c1, c2, c3 = st.columns(3)
-        c1.metric("Students", sum(1 for u in users if u.get("role") == "student"))
-        c2.metric("Teachers", sum(1 for u in users if u.get("role") == "teacher"))
-        c3.metric("Classes", len(list(db.collection("classes").stream() if admin_school_filter == "All Schools" else db.collection("classes").where(filter=firestore.FieldFilter("school", "==", admin_school_filter)).stream())))
+        c1.markdown(f'<div class="stat-card"><div class="stat-number">{sum(1 for u in users if u.get("role") == "student")}</div><div class="stat-label">Students</div></div>', unsafe_allow_html=True)
+        c2.markdown(f'<div class="stat-card"><div class="stat-number">{sum(1 for u in users if u.get("role") == "teacher")}</div><div class="stat-label">Teachers</div></div>', unsafe_allow_html=True)
+        
+        classes_count = len(list(db.collection("classes").stream() if admin_school_filter == "All Schools" else db.collection("classes").where(filter=firestore.FieldFilter("school", "==", admin_school_filter)).stream()))
+        c3.markdown(f'<div class="stat-card"><div class="stat-number">{classes_count}</div><div class="stat-label">Classes</div></div>', unsafe_allow_html=True)
 
     elif admin_page == "🎓 Students":
-        st.subheader(f"Manage Students ({admin_school_filter})")
+        st.markdown(f'<div class="section-header">🎓 Manage Students ({admin_school_filter})</div>', unsafe_allow_html=True)
         try:
             if admin_school_filter == "All Schools":
                 students =[{"id": d.id, **d.to_dict()} for d in db.collection("users").where(filter=firestore.FieldFilter("role", "==", "student")).stream()]
@@ -464,8 +507,7 @@ def render_admin_panel():
                 st.info("No students registered for this filter.")
         except Exception as e: st.error(str(e))
         
-        st.write("---")
-        st.write("🗑️ **Delete Student**")
+        st.markdown('<div class="section-header">🗑️ Delete Student</div>', unsafe_allow_html=True)
         del_id = st.text_input("Enter Student Email to Delete")
         cascade = st.checkbox("Also delete their chat threads and analytics history", value=True)
         if st.button("Permanently Delete Student", type="primary"):
@@ -479,7 +521,7 @@ def render_admin_panel():
                 except Exception as e: st.error(str(e))
 
     elif admin_page == "👩‍🏫 Teachers":
-        st.subheader(f"Manage Teachers ({admin_school_filter})")
+        st.markdown(f'<div class="section-header">👩‍🏫 Manage Teachers ({admin_school_filter})</div>', unsafe_allow_html=True)
         try:
             if admin_school_filter == "All Schools":
                 teachers =[{"id": d.id, **d.to_dict()} for d in db.collection("users").where(filter=firestore.FieldFilter("role", "==", "teacher")).stream()]
@@ -493,15 +535,14 @@ def render_admin_panel():
                 st.info("No teachers registered for this filter.")
         except Exception as e: st.error(str(e))
         
-        st.write("---")
-        st.write("🗑️ **Delete Teacher**")
+        st.markdown('<div class="section-header">🗑️ Delete Teacher</div>', unsafe_allow_html=True)
         del_t = st.text_input("Enter Teacher Email to delete")
         if st.button("Delete Teacher", type="primary") and del_t:
             db.collection("users").document(del_t).delete()
             st.success("Deleted")
 
     elif admin_page == "🏫 Classes":
-        st.subheader(f"Manage Classes ({admin_school_filter})")
+        st.markdown(f'<div class="section-header">🏫 Manage Classes ({admin_school_filter})</div>', unsafe_allow_html=True)
         try:
             if admin_school_filter == "All Schools":
                 classes =[{"id": d.id, **d.to_dict()} for d in db.collection("classes").stream()]
@@ -514,15 +555,14 @@ def render_admin_panel():
                 st.info("No classes created for this filter.")
         except Exception as e: st.error(str(e))
         
-        st.write("---")
-        st.write("🗑️ **Delete Class**")
+        st.markdown('<div class="section-header">🗑️ Delete Class</div>', unsafe_allow_html=True)
         del_c = st.text_input("Enter Class ID to delete")
         if st.button("Delete Class", type="primary") and del_c:
             db.collection("classes").document(del_c).delete()
             st.success("Deleted")
 
     elif admin_page == "🧪 AI Debug Lab":
-        st.subheader("🧪 AI Debug Lab")
+        st.markdown('<div class="section-header">🧪 AI Debug Lab</div>', unsafe_allow_html=True)
         m_choice = st.selectbox("Model",["gemini-3.1-flash-lite-preview", "gemini-2.5-flash", "gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "gemini-2.5-flash-lite"])
         d_prompt = st.text_area("Prompt")
         if st.button("▶️ Run"):
@@ -591,21 +631,17 @@ def is_image_mime(m: str) -> bool: return (m or "").lower().startswith("image/")
 
 @st.cache_resource(show_spinner=False)
 def upload_textbooks():
-    active_files = {"sci": [], "math":[], "eng":[]}
+    active_files = {"sci":[], "math":[], "eng":[]}
     
     # 1. Dynamically find ALL CIE pdfs in your folder! No more hardcoding names.
     pdf_map = {p.name.lower(): p for p in Path.cwd().rglob("*.pdf") if "cie" in p.name.lower()}
     target_files = list(pdf_map.keys())
     
-    try:
-        existing = {f.display_name.lower(): f for f in client.files.list() if f.display_name}
-    except Exception:
-        existing = {}
+    try: existing = {f.display_name.lower(): f for f in client.files.list() if f.display_name}
+    except Exception: existing = {}
     
-    msg_placeholder = st.empty()
-    with msg_placeholder.chat_message("assistant"): 
-        st.markdown(f"""<div class="thinking-container"><span class="thinking-text">📚 Synchronizing {len(target_files)} Textbooks...</span><div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>""", unsafe_allow_html=True)
-
+    with st.chat_message("assistant"): st.markdown(f"""<div class="thinking-container"><span class="thinking-text">📚 Synchronizing {len(target_files)} Textbooks...</span><div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>""", unsafe_allow_html=True)
+    
     def process_single_book(t):
         if t in existing and existing[t].state.name == "ACTIVE": return t, existing[t]
         if t in pdf_map:
@@ -627,42 +663,38 @@ def upload_textbooks():
             if "sci" in t: active_files["sci"].append(file_obj)
             elif "math" in t: active_files["math"].append(file_obj)
             elif "eng" in t: active_files["eng"].append(file_obj)
-
-    msg_placeholder.empty()
     return active_files
 
-def recache_textbooks_for_session():
-    with st.spinner("Preparing your curriculum materials..."):
-        st.session_state.textbook_handles = upload_textbooks()
-        st.session_state.textbook_cached_at = time.time()
 if is_authenticated and "textbook_handles" not in st.session_state:
-    recache_textbooks_for_session()
+    with st.spinner("Preparing curriculum..."): st.session_state.textbook_handles = upload_textbooks()
 
-def select_relevant_books(query, file_dict):
+def select_relevant_books(query, file_dict, user_grade="Grade 6"):
     qn = normalize_stage_text(query)
-    # Match grades better
     s7 = any(k in qn for k in["stage 7", "grade 6", "year 7"])
     s8 = any(k in qn for k in["stage 8", "grade 7", "year 8"])
     s9 = any(k in qn for k in["stage 9", "grade 8", "year 9"])
     
-    # Match subjects better
-    im = any(k in qn for k in ["math", "algebra", "number", "fraction", "geometry", "calculate", "equation"])
+    im = any(k in qn for k in["math", "algebra", "number", "fraction", "geometry", "calculate", "equation"])
     isc = any(k in qn for k in["sci", "biology", "physics", "chemistry", "experiment", "cell", "gravity"])
     ien = any(k in qn for k in["eng", "poem", "story", "essay", "writing", "grammar"])
     
-    if not (s7 or s8 or s9): s8 = True # Default Grade
-    if not (im or isc or ien): im = isc = ien = True # If no subject mentioned, grab all 3
-    
+    if not (s7 or s8 or s9):
+        if user_grade == "Grade 6": s7 = True
+        elif user_grade == "Grade 7": s8 = True
+        elif user_grade == "Grade 8": s9 = True
+        else: s8 = True
+        
+    if not (im or isc or ien): im = isc = ien = True
     sel =[]
     def add(k, act):
         if act: 
             for b in file_dict.get(k,[]):
                 n = b.display_name.lower()
-                if (s7 and "cie_7" in n) or (s8 and "cie_8" in n) or (s9 and "cie_9" in n):
-                    sel.append(b)
+                if (s7 and "cie_7" in n) or (s8 and "cie_8" in n) or (s9 and "cie_9" in n): sel.append(b)
     
     add("math", im); add("sci", isc); add("eng", ien)
-    return sel[:3] # Limit to top 3 so we don't exceed AI context limits
+    return sel[:3]
+
 # ==========================================
 # APP ROUTING: TEACHER DASHBOARD
 # ==========================================
@@ -710,9 +742,8 @@ if user_role == "teacher":
 
         if st.button("🤖 Generate with Helix AI", type="primary", use_container_width=True):
             with st.spinner("Writing paper..."):
-                books = select_relevant_books(f"{assign_subject} {assign_grade}", st.session_state.textbook_handles)
+                books = select_relevant_books(f"{assign_subject} {assign_grade}", st.session_state.textbook_handles, assign_grade)
                 parts =[]
-                # Books AT THE TOP of the prompt (RAG Best Practice)
                 for b in books: parts.extend([types.Part.from_text(text=f"[Source: {b.display_name}]"), types.Part.from_uri(file_uri=b.uri, mime_type="application/pdf")])
                 
                 parts.append(types.Part.from_text(text=f"Task: Generate a CIE {assign_subject} paper for {GRADE_TO_STAGE[assign_grade]} ({assign_grade}). Difficulty: {assign_difficulty}. Marks: {assign_marks}. Extra: {assign_extra}. Append [PDF_READY] at end."))
@@ -752,10 +783,17 @@ else:
 if render_chat_interface:
     for idx, msg in enumerate(st.session_state.messages):
         with st.chat_message(msg["role"]):
-            st.markdown(re.sub(r"\[PDF_READY\]|\[ANALYTICS:.*?\]", "", msg.get("content") or "", flags=re.IGNORECASE|re.DOTALL).strip())
+            # Aggressive Regex Sweeper: Removes tags and stray JSON blocks
+            disp = re.sub(r"===ANALYTICS_START===.*?===ANALYTICS_END===", "", msg.get("content") or "", flags=re.IGNORECASE|re.DOTALL)
+            disp = re.sub(r"```json\s*\{[^{]*?\"weak_point\".*?\}\s*```", "", disp, flags=re.IGNORECASE|re.DOTALL)
+            disp = re.sub(r"\{[^{]*?\"weak_point\".*?\}", "", disp, flags=re.IGNORECASE|re.DOTALL)
+            disp = re.sub(r"\[PDF_READY\]", "", disp, flags=re.IGNORECASE).strip()
+            
+            st.markdown(disp)
+            
             for img, mod in zip(msg.get("images") or[], msg.get("image_models", ["Unknown"]*10)):
                 if img: st.image(img, use_container_width=True, caption=f"✨ Generated by helix.ai ({mod})")
-            for b64, mod in zip(msg.get("db_images") or [], msg.get("image_models", ["Unknown"]*10)):
+            for b64, mod in zip(msg.get("db_images") or[], msg.get("image_models", ["Unknown"]*10)):
                 if b64:
                     try: st.image(base64.b64decode(b64), use_container_width=True, caption=f"✨ Generated by helix.ai ({mod})")
                     except: pass
@@ -778,14 +816,12 @@ if render_chat_interface:
         st.session_state.messages.append({"role": "user", "content": chat_input.text or "", "user_attachment_bytes": f_bytes, "user_attachment_mime": f_mime, "user_attachment_name": f_name})
         save_chat_history(); st.rerun()
 
-    # Process latest User Message
     if st.session_state.messages and st.session_state.messages[-1]["role"] == "user":
         msg_data = st.session_state.messages[-1]
         with st.chat_message("assistant"):
             think = st.empty(); think.markdown("""<div class="thinking-container"><span class="thinking-text">Thinking</span><div class="thinking-dots"><div class="thinking-dot"></div><div class="thinking-dot"></div><div class="thinking-dot"></div></div></div>""", unsafe_allow_html=True)
             
             try:
-                # 1. Gather Text History (Strictly Alternating)
                 valid_history =[]
                 exp_role = "model"
                 for m in reversed([m for m in st.session_state.messages[:-1] if not m.get("is_greeting")]):
@@ -796,11 +832,18 @@ if render_chat_interface:
                         exp_role = "user" if exp_role == "model" else "model"
                 if valid_history and valid_history[0].role == "model": valid_history.pop(0)
 
-                # 2. Build Current Turn (RAG Best Practice: Docs First, Query Last)
                 curr_parts =[]
-                books = select_relevant_books(" ".join([m.get("content","") for m in st.session_state.messages[-3:]]), st.session_state.textbook_handles)
-                for b in books: curr_parts.extend([types.Part.from_text(text=f"[Source: {b.display_name}]"), types.Part.from_uri(file_uri=b.uri, mime_type="application/pdf")])
-
+                # Explicitly pass the student's grade to make book matching bulletproof
+                student_grade = user_profile.get("grade", "Grade 6")
+                books = select_relevant_books(" ".join([m.get("content","") for m in st.session_state.messages[-3:]]), st.session_state.textbook_handles, student_grade)
+                
+                if books:
+                    st.caption(f"📚 **Reading Textbooks:** {', '.join([get_friendly_name(b.display_name) for b in books])}")
+                    for b in books: 
+                        curr_parts.append(types.Part.from_text(text=f"--- START OF SOURCE TEXTBOOK: {b.display_name} ---"))
+                        curr_parts.append(types.Part.from_uri(file_uri=b.uri, mime_type="application/pdf"))
+                        curr_parts.append(types.Part.from_text(text=f"--- END OF SOURCE TEXTBOOK ---"))
+                
                 if f_bytes := msg_data.get("user_attachment_bytes"):
                     mime = msg_data.get("user_attachment_mime") or guess_mime(msg_data.get("user_attachment_name"))
                     if is_image_mime(mime): curr_parts.append(types.Part.from_bytes(data=f_bytes, mime_type=mime))
@@ -812,9 +855,8 @@ if render_chat_interface:
                         curr_parts.append(types.Part.from_uri(file_uri=up.uri, mime_type="application/pdf"))
                         os.remove(tmp)
 
-                curr_parts.append(types.Part.from_text(text=msg_data.get("content") or "Please analyze the attached file."))
+                curr_parts.append(types.Part.from_text(text=f"Please analyze the attached Cambridge textbooks and files. You MUST use the book's facts and terminology.\n\nUser Query: {msg_data.get('content')}"))
                 
-                # 3. Generate
                 resp = client.models.generate_content(
                     model="gemini-3.1-flash-lite-preview",
                     contents=valid_history +[types.Content(role="user", parts=curr_parts)],
@@ -822,17 +864,21 @@ if render_chat_interface:
                 )
                 bot_txt = safe_response_text(resp) or "⚠️ *Failed to generate text.*"
                 
-                # Analytics Extraction
-                if am := re.search(r"\[ANALYTICS:\s*({.*?})\s*\]", bot_txt, flags=re.IGNORECASE|re.DOTALL):
+                # Strict Boundary Analytics Extraction
+                am = re.search(r"===ANALYTICS_START===(.*?)===ANALYTICS_END===", bot_txt, flags=re.IGNORECASE|re.DOTALL)
+                if not am: 
+                    # Fallback if model just prints JSON
+                    am = re.search(r"(\{[\s\S]*?\"weak_point\"[\s\S]*?\})", bot_txt, flags=re.IGNORECASE)
+                
+                if am:
                     try:
                         ad = json.loads(am.group(1))
-                        bot_txt = bot_txt[:am.start()].strip()
+                        bot_txt = bot_txt.replace(am.group(0), "").strip()
                         if is_authenticated and db: db.collection("users").document(user_email).collection("analytics").add({"timestamp": time.time(), **ad})
                     except Exception: pass
 
                 think.empty()
                 
-                # Images Extraction
                 imgs, mods = [],[]
                 if v_prompts := re.findall(r"(IMAGE_GEN|PIE_CHART):\s*\[(.*?)\]", bot_txt):
                     with concurrent.futures.ThreadPoolExecutor(5) as exe:
@@ -840,7 +886,7 @@ if render_chat_interface:
                             if r and r[0]: imgs.append(r[0]); mods.append(r[1])
                             else: imgs.append(None); mods.append("Failed")
                 
-                dl = bool(re.search(r"\[PDF_READY\]", bot_txt, re.IGNORECASE))
+                dl = bool(re.search(r"\[PDF_READY\]", bot_txt, re.IGNORECASE) or (re.search(r"##\s*Mark Scheme", bot_txt, re.IGNORECASE) and re.search(r"\[\d+\]", bot_txt)))
                 st.session_state.messages.append({"role": "assistant", "content": bot_txt, "is_downloadable": dl, "images": imgs, "image_models": mods})
                 
                 if is_authenticated and sum(1 for m in st.session_state.messages if m["role"] == "user") == 1:
