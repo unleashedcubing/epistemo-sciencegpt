@@ -848,4 +848,4 @@ if render_chat_interface:
                 
                 save_chat_history(); st.rerun()
                 
-            except Exception as e: think.empty(); st.error(f"Error: {e}"))
+            except Exception as e: think.empty(); st.error(f"Error: {e}")
