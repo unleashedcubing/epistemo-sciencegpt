@@ -58,7 +58,7 @@ else:
     SCHOOL_CODES = {}
 
 # SYLLABUS TEXT (Extracted to keep prompts clean)
-ENGLISH_SYLLABUS_G8 = """
+ENGLISH_SYLLABUS_G8/S9 = """
 Chapter 1: Writing to explore and reflect (Travel writing, register, tone)
 Chapter 2: Writing to inform and explain (Formal/informal, encyclopedia entries)
 Chapter 3: Writing to argue and persuade (Persuasive techniques, essays)
@@ -91,11 +91,11 @@ IMPORTANT: ALWAYS check the book when creating questions to ensure syllabus alig
 - Visuals: Use IMAGE_GEN for diagrams, PIE_CHART for pie charts. Ask for labels if relevant.
 - NUMBERING: Clean numbering 1., 2., 3. with sub-questions (a), (b), (c). Put marks at the end of the line like "... [3]".
 - Title: Use the requested assignment title as the EXACT title. Do not hallucinate school names.
-- PDF TRIGGER: If you generate a full formal question paper, append [PDF_READY] at the very end.
-- ENGLISH PAPERS: Generate informal paper if not specified. Minimum 15 questions per paper. 40M for grade 7/below, 50M for grade 8. Include grammar related to text, 750+ word reading comprehensions, poem comprehensions (max 200 words), and 2 mandatory writing tasks. 
+- PDF TRIGGER: If you generate a full formal question paper, append [PDF_READY] at the very end
+- ENGLISH PAPERS: Generate informal paper if not specified. Minimum 15 questions per paper. 40M for grade 7/below, 50M for grade 8. Include grammar related to text, 750+ word reading comprehensions, poem comprehensions (max 200 words), and 2 mandatory writing tasks from the book (Articles, Summaries, Review Writings, etc for Formal. Letter, Narrative, Descriptive Writings, etc for Informal). 
 
 ### RULE 4: English, Grade 8/Stage 9 Syllabus:
-{ENGLISH_SYLLABUS_G8}
+{ENGLISH_SYLLABUS_G8/S9}
 
 ### RULE 5: VISUAL SYNTAX (STRICT)
 - For diagrams: IMAGE_GEN:[Detailed description of the image, educational, white background]
@@ -119,7 +119,7 @@ At the VERY END of your response, you MUST output a hidden analytics block wrapp
 }}
 ===ANALYTICS_END===
 - `subject` MUST be "Math", "Biology", "Chemistry", "Physics", or "English" (NEVER "Science").
-- Find exact chapter details from the PDF TOC.
+- Find exact chapter details from the PDF TOC/Books.
 
 ### RULE 8: Grade Scheme Mapping
 Stage 7 = Grade 6 | Stage 8 = Grade 7 | Stage 9 = Grade 8.
@@ -563,7 +563,7 @@ def render_admin_panel():
 
     elif admin_page == "🧪 AI Debug Lab":
         st.markdown('<div class="section-header">🧪 AI Debug Lab</div>', unsafe_allow_html=True)
-        m_choice = st.selectbox("Model",["gemini-3.1-flash-lite-preview", "gemini-2.5-flash", "gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "gemini-2.5-flash-lite"])
+        m_choice = st.selectbox("Model",["gemini-3.1-flash-lite-preview", "gemini-2.5-flash", "gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3.1-pro"])
         d_prompt = st.text_area("Prompt")
         if st.button("▶️ Run"):
             with st.spinner("Running..."):
@@ -749,7 +749,7 @@ if user_role == "teacher":
                 parts.append(types.Part.from_text(text=f"Task: Generate a CIE {assign_subject} paper for {GRADE_TO_STAGE[assign_grade]} ({assign_grade}). Difficulty: {assign_difficulty}. Marks: {assign_marks}. Extra: {assign_extra}. Append [PDF_READY] at end."))
                 
                 try:
-                    resp = client.models.generate_content(model="gemini-3.1-flash-lite-preview", contents=parts, config=types.GenerateContentConfig(system_instruction=PAPER_SYSTEM, temperature=0.1))
+                    resp = client.models.generate_content(model="gemini-2.5-pro", contents=parts, config=types.GenerateContentConfig(system_instruction=PAPER_SYSTEM, temperature=0.1))
                     gen_paper = safe_response_text(resp)
                     
                     draft_imgs, draft_mods = [],[]
@@ -858,7 +858,7 @@ if render_chat_interface:
                 curr_parts.append(types.Part.from_text(text=f"Please analyze the attached Cambridge textbooks and files. You MUST use the book's facts and terminology.\n\nUser Query: {msg_data.get('content')}"))
                 
                 resp = client.models.generate_content(
-                    model="gemini-3.1-flash-lite-preview",
+                    model="gemini-2.5-pro",
                     contents=valid_history +[types.Content(role="user", parts=curr_parts)],
                     config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION, temperature=0.3, tools=[{"google_search": {}}])
                 )
